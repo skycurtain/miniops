@@ -18,6 +18,9 @@ logs
 .fleet
 .idea
 
+# Editor / agent tooling
+.reasonix/
+
 # Local env files
 .env
 .env.*

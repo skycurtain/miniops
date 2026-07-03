@@ -179,6 +179,16 @@ export function useDispatch() {
         eventSource = null
 
         const s = data.summary
+        // 持久化到 sessionStorage 供总览页读取
+        try {
+          sessionStorage.setItem('last-dispatch', JSON.stringify({
+            total: s.total,
+            success: s.success,
+            failed: s.failed,
+            time: new Date().toLocaleString('zh-CN'),
+          }))
+        } catch {}
+
         toast.add({
           title: '分发完成',
           description: `共 ${s.total} 个，成功 ${s.success} 个，失败 ${s.failed} 个`,

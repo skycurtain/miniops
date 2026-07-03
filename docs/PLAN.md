@@ -12,7 +12,7 @@
 | Phase 1 | 数据层 + 实例管理 ✅ | 后端数据存储 + 实例组/实例 CRUD + 前端管理页 | 大 |
 | Phase 2 | 连通性测试 + 导入导出 ✅ | 连通性测试功能 + JSON 导入导出 | 中 |
 | Phase 3 | 文件分发（核心） ✅ | 分发执行 + SSE 进度 + 前端分发页 | 大 |
-| Phase 4 | 总览 + 收尾 | 仪表盘统计 + 细节打磨 + 部署文档 | 中 |
+| Phase 4 | 总览 + 收尾 ✅ | 仪表盘统计 + 细节打磨 + 部署文档 | 中 |
 
 ---
 
@@ -173,28 +173,28 @@
 
 ---
 
-## Phase 4：总览 + 收尾
+## Phase 4：总览 + 收尾 ✅
 
 **目标**：完成仪表盘统计，打磨细节，输出部署文档。
 
 ### 任务清单
 
-- [ ] `app/pages/index.vue` — 总览页
-  - 统计卡片：实例组数、实例总数、在线/离线数（`NuxtCard` + `useFetch`）
+- [x] `app/pages/index.vue` — 总览页
+  - 统计卡片：实例组数、实例总数、启用/禁用数（`NuxtCard` + `useFetch`）
   - 快速入口按钮（去分发、去管理实例）
-  - 最近一次分发结果概览（从内存中读取 last task）
-- [ ] 细节打磨
+  - 最近一次分发结果概览（从 sessionStorage 读取 last dispatch）
+- [x] 细节打磨
   - 表单校验提示（`NuxtForm` + `NuxtToast`）
-  - 删除确认弹窗（`NuxtModal` 确认）
-  - 加载状态（`NuxtSkeleton` / loading spinner）
+  - 删除确认弹窗（`ConfirmDialog` 确认）
+  - 加载状态（骨架屏 + loading spinner）
   - 错误处理（`NuxtToast` 错误提示）
-  - 响应式适配（移动端侧边栏折叠）
-- [ ] 部署文档
+  - 响应式适配（侧边栏折叠，DashboardSidebar collapsible）
+- [x] 部署文档
   - 生产构建命令（`bun run build`）
   - 启动命令（`bun run .output/server/index.mjs`）
   - 环境变量说明
-  - Nginx 反向代理参考配置（可选）
-- [ ] 全量测试
+  - Nginx 反向代理参考配置（SSE 关闭缓冲）
+- [x] 全量测试
 
 ### 验收标准
 

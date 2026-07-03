@@ -49,9 +49,8 @@ const navItems = [
         />
       </template>
 
-      <template #footer="{ collapsed }">
-        <NuxtDashboardSidebarCollapse v-if="!collapsed" />
-        <NuxtDashboardSidebarCollapse v-else />
+      <template #footer>
+        <NuxtDashboardSidebarCollapse />
       </template>
     </NuxtDashboardSidebar>
 

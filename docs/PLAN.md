@@ -9,9 +9,9 @@
 | 阶段 | 名称 | 目标 | 预估工作量 |
 |---|---|---|---|
 | Phase 0 | 项目骨架 ✅ | Dashboard 布局 + 路由 + 导航 | 小 |
-| Phase 1 | 数据层 + 实例管理 | 后端数据存储 + 实例组/实例 CRUD + 前端管理页 | 大 |
-| Phase 2 | 连通性测试 + 导入导出 | 连通性测试功能 + JSON 导入导出 | 中 |
-| Phase 3 | 文件分发（核心） | 分发执行 + SSE 进度 + 前端分发页 | 大 |
+| Phase 1 | 数据层 + 实例管理 ✅ | 后端数据存储 + 实例组/实例 CRUD + 前端管理页 | 大 |
+| Phase 2 | 连通性测试 + 导入导出 ✅ | 连通性测试功能 + JSON 导入导出 | 中 |
+| Phase 3 | 文件分发（核心） ✅ | 分发执行 + SSE 进度 + 前端分发页 | 大 |
 | Phase 4 | 总览 + 收尾 | 仪表盘统计 + 细节打磨 + 部署文档 | 中 |
 
 ---
@@ -41,7 +41,7 @@
 
 ---
 
-## Phase 1：数据层 + 实例管理
+## Phase 1：数据层 + 实例管理 ✅
 
 **目标**：完成后端数据存储和实例组/实例的增删改查，前端管理页可用。
 
@@ -49,13 +49,13 @@
 
 #### 后端
 
-- [ ] 创建 `server/types/index.ts` — 类型定义
-- [ ] 创建 `server/data/groups.json` — 初始数据（含默认组）
-- [ ] 创建 `server/utils/store.ts` — 数据读写层
+- [x] 创建 `server/types/index.ts` — 类型定义
+- [x] 创建 `server/data/groups.json` — 初始数据（含默认组）
+- [x] 创建 `server/utils/store.ts` — 数据读写层
   - 读写 `groups.json`，互斥锁保证并发安全
   - 默认组自动初始化
   - ID 生成（`crypto.randomUUID()`）
-- [ ] 实现 API：
+- [x] 实现 API：
   - `GET /api/groups` — 获取所有组（含嵌套实例）
   - `POST /api/groups` — 新增组
   - `PUT /api/groups/:id` — 更新组信息
@@ -67,13 +67,13 @@
 
 #### 前端
 
-- [ ] `app/pages/groups/index.vue` — 实例管理页
+- [x] `app/pages/groups/index.vue` — 实例管理页
   - `NuxtTable` 展示组列表（名称、描述、实例数、操作按钮）
   - `NuxtModal` + `NuxtForm` — 新增/编辑组
   - 点击组行展开 → 内嵌实例 `NuxtTable`
   - 实例行操作：编辑（Modal）、复制、删除、启用/禁用切换
   - 新增实例 Modal：名称、endpoint、accessKey、secretKey、bucket（可选）、enabled
-- [ ] 数据获取用 `useFetch`，操作后 `refresh()` 刷新
+- [x] 数据获取用 `useFetch`，操作后 `refresh()` 刷新
 
 ### 验收标准
 
@@ -85,7 +85,7 @@
 
 ---
 
-## Phase 2：连通性测试 + 导入导出
+## Phase 2：连通性测试 + 导入导出 ✅
 
 **目标**：实例管理页增加连通性测试和导入导出功能。
 
@@ -93,20 +93,20 @@
 
 #### 后端
 
-- [ ] 创建 `server/utils/minio.ts` — MinIO 操作封装
+- [x] 创建 `server/utils/minio.ts` — MinIO 操作封装
   - `testConnectivity(instance)` — 请求 `endpoint/minio/health/live`，返回 `{ online, latency, error }`
-- [ ] 实现 API：
+- [x] 实现 API：
   - `POST /api/groups/:id/test` — 测试组内所有实例
   - `POST /api/groups/import` — 导入 JSON（覆盖模式）
   - `GET /api/groups/export` — 导出 JSON
 
 #### 前端
 
-- [ ] 连通性测试
+- [x] 连通性测试
   - 组详情内"测试全部"按钮 → 调用 `POST /api/groups/:id/test`
   - 实例行内"测试"按钮 → 单个测试
   - 结果展示：在线/离线状态标签（`NuxtBadge`），延迟毫秒数
-- [ ] 导入/导出
+- [x] 导入/导出
   - 页面顶部"导入"按钮 → `NuxtFileUpload`（accept=".json"）→ 读取文件 → `POST /api/groups/import`
   - "导出"按钮 → 下载 `GET /api/groups/export` 的 JSON
   - 导入结果提示（新增 N 条、更新 M 条）
@@ -121,7 +121,7 @@
 
 ---
 
-## Phase 3：文件分发（核心）
+## Phase 3：文件分发（核心） ✅
 
 **目标**：完成文件分发全流程——选文件、选目标、执行、实时进度。
 
@@ -129,16 +129,16 @@
 
 #### 后端
 
-- [ ] 创建 `server/utils/dispatcher.ts` — 分发执行器
+- [x] 创建 `server/utils/dispatcher.ts` — 分发执行器
   - 并发控制（信号量，默认 5）
   - 每个实例：遍历文件，用 `uploadJson()` 上传
   - 进度回调：每个文件完成后回调 `onProgress(result)`
-- [ ] 完善 `server/utils/minio.ts`
+- [x] 完善 `server/utils/minio.ts`
   - `uploadJson(instance, bucket, filename, content)` — 预签名 PUT + fetch
-- [ ] 实现 API：
+- [x] 实现 API：
   - `POST /api/dispatch` — 创建任务，返回 taskId，后台异步执行
   - `GET /api/dispatch/events?taskId=xxx` — SSE 流
-- [ ] SSE 实现（Nitro `createEventStream`）
+- [x] SSE 实现（Nitro `createEventStream`）
   - 注册 taskId → stream 映射
   - dispatcher 进度回调 → push 到 stream
   - 任务完成 → push complete 事件
@@ -146,11 +146,11 @@
 
 #### 前端
 
-- [ ] 创建 `app/composables/useDispatch.ts`
+- [x] 创建 `app/composables/useDispatch.ts`
   - 状态：files, selectedGroupIds, selectedInstanceIds, bucket, results, isRunning
   - `bucketOptions` computed — 选中实例 bucket 去重
   - `submit()` — POST + 建立 SSE 监听
-- [ ] `app/pages/ops/dispatch/index.vue` — 分发页
+- [x] `app/pages/ops/dispatch/index.vue` — 分发页
   - 顶部：`NuxtFileUpload`（multiple, accept=".json"）→ 读取文件内容
   - 中部：分组 `NuxtTable`（可展开行）
     - 组行 checkbox + 实例行 checkbox + 父子联动

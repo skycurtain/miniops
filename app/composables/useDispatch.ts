@@ -1,8 +1,7 @@
 /**
  * 分发相关前端逻辑
  *
- * 状态管理：文件、选中目标、按实例 bucket、进度矩阵、运行状态。
- * submit() 提交任务并建立 SSE 监听。
+ * 状态管理：文件、选中目标、按实例 bucket（异步从 MinIO 拉取）、进度矩阵、运行状态。
  */
 
 interface MinioInstance {
@@ -12,7 +11,6 @@ interface MinioInstance {
   endpoint: string
   accessKey: string
   secretKey: string
-  bucket?: string
   enabled: boolean
 }
 interface InstanceGroup {
@@ -34,39 +32,39 @@ interface DispatchResult {
   duration?: number
 }
 
-/** 单元格状态：null=未处理, 'running'=进行中, DispatchResult=已完成 */
+/** 单元格状态 */
 type CellStatus = DispatchResult | 'running' | null
 
-export function useDispatch() {
-  // 选择的文件（文件名 + 内容）
-  const files = ref<{ name: string; content: string }[]>([])
+/** 实例 bucket 加载状态 */
+interface BucketLoadState {
+  buckets: string[]
+  loading: boolean
+  error?: string
+}
 
-  // 选中的目标
+export function useDispatch() {
+  const files = ref<{ name: string; content: string }[]>([])
   const selectedInstanceIds = ref<Set<string>>(new Set())
 
-  // 按实例指定 bucket：instanceId → bucket
-  // 初始为空，页面会自动用实例自身的 bucket 填充
+  // 按实例指定 bucket
   const instanceBuckets = ref<Record<string, string>>({})
 
-  // 进度矩阵：key = `${instanceId}::${fileName}`，value = 状态
-  const progress = ref<Record<string, CellStatus>>({})
+  // 按实例的 bucket 候选列表（异步从 MinIO 拉取）
+  const instanceBucketOptions = ref<Record<string, BucketLoadState>>({})
 
-  // 运行状态
+  const progress = ref<Record<string, CellStatus>>({})
   const isRunning = ref(false)
   const taskSummary = ref<{ total: number; success: number; failed: number } | null>(null)
   let eventSource: EventSource | null = null
 
-  /** 构造矩阵 key */
   function cellKey(instanceId: string, fileName: string): string {
     return `${instanceId}::${fileName}`
   }
 
-  /** 获取单元格状态 */
   function getCell(instanceId: string, fileName: string): CellStatus {
     return progress.value[cellKey(instanceId, fileName)] ?? null
   }
 
-  /** 计算选中实例列表 */
   function getSelectedInstances(groups: InstanceGroup[]): MinioInstance[] {
     const result: MinioInstance[] = []
     const seen = new Set<string>()
@@ -81,23 +79,9 @@ export function useDispatch() {
     return result
   }
 
-  /**
-   * 收集所有实例的 bucket 去重，作为选择器候选列表。
-   * 注意：不只收集选中的，而是全部实例的 bucket（用户可能想统一换成别的）。
-   */
-  function getAllBucketOptions(groups: InstanceGroup[]): string[] {
-    const set = new Set<string>()
-    for (const g of groups) {
-      for (const inst of g.instances) {
-        if (inst.bucket) set.add(inst.bucket)
-      }
-    }
-    return Array.from(set).sort()
-  }
-
-  /** 获取某个实例当前设置的 bucket（instanceBuckets 优先，回退到实例默认） */
+  /** 获取实例当前设置的 bucket */
   function getInstanceBucket(inst: MinioInstance): string {
-    return instanceBuckets.value[inst.id] ?? inst.bucket ?? ''
+    return instanceBuckets.value[inst.id] ?? ''
   }
 
   /** 设置单个实例的 bucket */
@@ -117,9 +101,85 @@ export function useDispatch() {
   }
 
   /**
-   * 提交分发任务
-   * @param groups 当前所有组（用于展开 groupIds）
+   * 异步加载选中实例的 bucket 列表（从 MinIO ListBuckets 拉取）。
+   * 只加载尚未加载过的实例。
    */
+  async function loadBuckets(groups: InstanceGroup[]) {
+    const selected = getSelectedInstances(groups)
+    const needLoad = selected.filter(inst => !instanceBucketOptions.value[inst.id])
+    if (!needLoad.length) return
+
+    // 标记为 loading
+    for (const inst of needLoad) {
+      instanceBucketOptions.value[inst.id] = { buckets: [], loading: true }
+    }
+
+    try {
+      const result = await $fetch<Record<string, { buckets: string[], error?: string }>>('/api/instances/buckets', {
+        method: 'POST',
+        body: { instanceIds: needLoad.map(i => i.id) },
+      })
+
+      for (const inst of needLoad) {
+        const r = result[inst.id]
+        if (r) {
+          instanceBucketOptions.value[inst.id] = {
+            buckets: r.buckets,
+            loading: false,
+            error: r.error,
+          }
+          // 如果只有一个 bucket 且实例未设 bucket，自动选中
+          if (r.buckets.length === 1 && !instanceBuckets.value[inst.id] && r.buckets[0]) {
+            instanceBuckets.value[inst.id] = r.buckets[0]
+          }
+        }
+      }
+    }
+    catch (e: any) {
+      // 整体请求失败，标记所有为 error
+      for (const inst of needLoad) {
+        instanceBucketOptions.value[inst.id] = {
+          buckets: [],
+          loading: false,
+          error: e?.data?.statusMessage || e?.message || '请求失败',
+        }
+      }
+    }
+  }
+
+  /** 获取实例的 bucket 候选列表 */
+  function getInstanceBucketOptions(inst: MinioInstance): BucketLoadState {
+    return instanceBucketOptions.value[inst.id] ?? { buckets: [], loading: false }
+  }
+
+  /**
+   * 计算组内选中实例的 bucket 交集（用于组级批量选择器候选）。
+   */
+  function getGroupBucketIntersection(groups: InstanceGroup[], groupId: string): string[] {
+    const g = groups.find(g => g.id === groupId)
+    if (!g) return []
+    const selected = g.instances.filter(i => selectedInstanceIds.value.has(i.id) && i.enabled)
+    if (!selected.length) return []
+
+    // 取所有选中实例已加载 bucket 的交集
+    const bucketSets = selected.map(inst => {
+      const opts = instanceBucketOptions.value[inst.id]
+      return new Set(opts?.buckets ?? [])
+    })
+
+    // 过滤掉 loading 或 error 的实例
+    const readySets = bucketSets.filter(s => s.size >= 0)
+    if (!readySets.length) return []
+
+    // 交集
+    let intersection = readySets[0]!
+    for (let i = 1; i < readySets.length; i++) {
+      intersection = new Set([...intersection].filter(x => readySets[i]!.has(x)))
+    }
+    return [...intersection].sort()
+  }
+
+  /** 提交分发任务 */
   async function submit(groups: InstanceGroup[]) {
     if (isRunning.value) return
     if (!files.value.length) {
@@ -135,7 +195,7 @@ export function useDispatch() {
       return
     }
 
-    // 检查是否所有实例都有 bucket
+    // 校验所有实例都有 bucket
     const noBucket = selected.filter(inst => !getInstanceBucket(inst))
     if (noBucket.length) {
       const toast = useToast()
@@ -147,7 +207,6 @@ export function useDispatch() {
       return
     }
 
-    // 重置进度矩阵
     progress.value = {}
     taskSummary.value = null
     isRunning.value = true
@@ -157,7 +216,6 @@ export function useDispatch() {
       const groupIds = Array.from(new Set(selected.map(i => i.groupId)))
       const instanceIds = selected.map(i => i.id)
 
-      // 构造 instanceBuckets：只传与实例默认值不同的（减少请求体）
       const buckets: Record<string, string> = {}
       for (const inst of selected) {
         const b = getInstanceBucket(inst)
@@ -174,7 +232,6 @@ export function useDispatch() {
         },
       })
 
-      // 建立 SSE 连接
       eventSource = new EventSource(`/api/dispatch/events?taskId=${res.taskId}`)
 
       eventSource.addEventListener('start', () => {
@@ -246,7 +303,6 @@ export function useDispatch() {
     }
   }
 
-  /** 取消分发（关闭 SSE） */
   function cancel() {
     eventSource?.close()
     eventSource = null
@@ -257,6 +313,7 @@ export function useDispatch() {
     files,
     selectedInstanceIds,
     instanceBuckets,
+    instanceBucketOptions,
     progress,
     isRunning,
     taskSummary,
@@ -264,10 +321,12 @@ export function useDispatch() {
     cancel,
     getCell,
     getSelectedInstances,
-    getAllBucketOptions,
     getInstanceBucket,
     setInstanceBucket,
     setGroupBucket,
+    loadBuckets,
+    getInstanceBucketOptions,
+    getGroupBucketIntersection,
     cellKey,
   }
 }

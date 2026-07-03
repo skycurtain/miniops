@@ -163,7 +163,6 @@ export async function addInstance(groupId: string, input: CreateInstanceInput): 
       endpoint: input.endpoint,
       accessKey: input.accessKey,
       secretKey: input.secretKey,
-      bucket: input.bucket,
       enabled: input.enabled,
     }
     group.instances.push(instance)
@@ -189,7 +188,6 @@ export async function updateInstance(
     if (input.endpoint !== undefined) instance.endpoint = input.endpoint
     if (input.accessKey !== undefined) instance.accessKey = input.accessKey
     if (input.secretKey !== undefined) instance.secretKey = input.secretKey
-    if (input.bucket !== undefined) instance.bucket = input.bucket
     if (input.enabled !== undefined) instance.enabled = input.enabled
     group.updatedAt = now()
     await writeRaw(groups)

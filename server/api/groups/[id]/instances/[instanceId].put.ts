@@ -24,7 +24,6 @@ export default defineEventHandler(async (event) => {
     endpoint: body?.endpoint?.trim(),
     accessKey: body?.accessKey?.trim(),
     secretKey: body?.secretKey?.trim(),
-    bucket: body?.bucket?.trim() || undefined,
     enabled: body?.enabled,
   })
 })

@@ -17,8 +17,6 @@ export interface MinioInstance {
   accessKey: string
   /** 秘密密钥 */
   secretKey: string
-  /** 该实例最常用的默认 bucket，如 ndm；分发时可覆盖 */
-  bucket?: string
   /** 是否启用 */
   enabled: boolean
 }
@@ -71,9 +69,9 @@ export interface DispatchRequest {
   groupIds: string[]
   /** 单独勾选的实例 ID（与 groupIds 合并去重） */
   instanceIds: string[]
-  /** 分发目标 bucket，全局覆盖实例默认值（向后兼容） */
+  /** 分发目标 bucket，全局覆盖（向后兼容） */
   bucket?: string
-  /** 按实例指定 bucket，优先级高于 bucket 和实例默认值 */
+  /** 按实例指定 bucket，优先级高于 bucket */
   instanceBuckets?: Record<string, string>
 }
 

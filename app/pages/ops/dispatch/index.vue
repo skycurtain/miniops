@@ -6,7 +6,6 @@ interface MinioInstance {
   endpoint: string
   accessKey: string
   secretKey: string
-  bucket?: string
   enabled: boolean
 }
 interface InstanceGroup {
@@ -94,8 +93,10 @@ function toggleGroup(g: InstanceGroup) {
 // 选中的实例列表
 const selectedInstances = computed(() => dispatch.getSelectedInstances(groups.value ?? []))
 
-// bucket 候选项：所有实例的 bucket 去重
-const allBucketOptions = computed(() => dispatch.getAllBucketOptions(groups.value ?? []))
+// 选中实例变化时自动加载 bucket 列表
+watch(() => dispatch.selectedInstanceIds.value, () => {
+  dispatch.loadBuckets(groups.value ?? [])
+}, { deep: true })
 
 // 组级批量 bucket 临时输入
 const groupBucketInput = ref<Record<string, string>>({})
@@ -104,6 +105,11 @@ function applyGroupBucket(g: InstanceGroup) {
   const val = groupBucketInput.value[g.id]
   if (!val) return
   dispatch.setGroupBucket(groups.value ?? [], g.id, val)
+}
+
+// 组级 bucket 交集候选
+function getGroupBucketOptions(g: InstanceGroup): string[] {
+  return dispatch.getGroupBucketIntersection(groups.value ?? [], g.id)
 }
 
 // ---------- 分发提交 ----------
@@ -238,15 +244,15 @@ async function retryInstance(instanceId: string) {
                 {{ g.instances.filter(i => i.enabled).length }} 个启用
               </NuxtBadge>
             </button>
-            <!-- 组级批量 bucket -->
+            <!-- 组级批量 bucket（交集候选） -->
             <div v-if="isGroupPartialSelected(g) || isGroupAllSelected(g)" class="flex items-center gap-1">
               <NuxtSelectMenu
                 v-model="groupBucketInput[g.id]"
-                :items="allBucketOptions.map(b => ({ label: b, value: b }))"
+                :items="getGroupBucketOptions(g).map(b => ({ label: b, value: b }))"
                 value-key="value"
-                placeholder="批量设 bucket"
+                :placeholder="getGroupBucketOptions(g).length ? '批量设 bucket' : '无公共 bucket'"
                 class="w-36"
-                :disabled="dispatch.isRunning.value"
+                :disabled="dispatch.isRunning.value || !getGroupBucketOptions(g).length"
               />
               <NuxtButton
                 size="xs"
@@ -280,9 +286,22 @@ async function retryInstance(instanceId: string) {
               <!-- 实例级 bucket 选择器（仅选中时显示） -->
               <div v-if="isInstanceSelected(inst) && inst.enabled" class="flex items-center gap-1">
                 <span class="text-xs text-muted">bucket</span>
-                <NuxtSelectMenu
+                <!-- 加载中 -->
+                <NuxtIcon v-if="dispatch.getInstanceBucketOptions(inst).loading" name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
+                <!-- 加载失败：允许手动输入 -->
+                <NuxtInput
+                  v-else-if="dispatch.getInstanceBucketOptions(inst).error"
                   :model-value="dispatch.getInstanceBucket(inst)"
-                  :items="allBucketOptions.map(b => ({ label: b, value: b }))"
+                  placeholder="输入 bucket"
+                  class="w-32"
+                  :disabled="dispatch.isRunning.value"
+                  @update:model-value="(val: string) => dispatch.setInstanceBucket(inst.id, val)"
+                />
+                <!-- 正常：选择器 -->
+                <NuxtSelectMenu
+                  v-else
+                  :model-value="dispatch.getInstanceBucket(inst)"
+                  :items="dispatch.getInstanceBucketOptions(inst).buckets.map(b => ({ label: b, value: b }))"
                   value-key="value"
                   placeholder="选择 bucket"
                   class="w-32"

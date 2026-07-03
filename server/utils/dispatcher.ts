@@ -131,8 +131,8 @@ async function processInstance(
   bucketOverride: string | undefined,
   instanceBuckets?: Record<string, string>,
 ): Promise<void> {
-  // 优先级：instanceBuckets[instanceId] > bucketOverride > instance.bucket
-  const targetBucket = instanceBuckets?.[instance.id] || bucketOverride || instance.bucket
+  // 优先级：instanceBuckets[instanceId] > bucketOverride
+  const targetBucket = instanceBuckets?.[instance.id] || bucketOverride
   const task = taskRegistry.get(taskId)!.task
 
   for (const file of files) {

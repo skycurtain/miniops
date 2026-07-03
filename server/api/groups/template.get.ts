@@ -21,7 +21,6 @@ export default defineEventHandler((event) => {
           endpoint: 'http://10.24.0.10:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',
-          bucket: 'ndm',
           enabled: true,
         },
         {
@@ -31,7 +30,6 @@ export default defineEventHandler((event) => {
           endpoint: 'http://10.24.0.11:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',
-          bucket: 'ndm',
           enabled: true,
         },
       ],
@@ -51,7 +49,6 @@ export default defineEventHandler((event) => {
           endpoint: 'http://10.24.0.20:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',
-          bucket: 'ndm',
           enabled: false,
         },
       ],

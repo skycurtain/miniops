@@ -15,7 +15,6 @@ interface MinioInstance {
   endpoint: string
   accessKey: string
   secretKey: string
-  bucket?: string
   enabled: boolean
 }
 interface InstanceGroup {
@@ -237,10 +236,9 @@ const instanceState = reactive<{
   endpoint: string
   accessKey: string
   secretKey: string
-  bucket?: string
   enabled: boolean
 }>({
-  name: '', endpoint: '', accessKey: '', secretKey: '', bucket: '', enabled: true,
+  name: '', endpoint: '', accessKey: '', secretKey: '', enabled: true,
 })
 // Secret Key 可见性切换
 const secretVisible = ref(false)
@@ -262,7 +260,7 @@ function openCreateInstance(groupId: string) {
   instanceGroupId.value = groupId
   editingInstance.value = null
   Object.assign(instanceState, {
-    name: '', endpoint: '', accessKey: '', secretKey: '', bucket: '', enabled: true,
+    name: '', endpoint: '', accessKey: '', secretKey: '', enabled: true,
   })
   instanceModalOpen.value = true
 }
@@ -274,7 +272,6 @@ function openEditInstance(groupId: string, inst: MinioInstance) {
     endpoint: inst.endpoint,
     accessKey: inst.accessKey,
     secretKey: inst.secretKey,
-    bucket: inst.bucket ?? '',
     enabled: inst.enabled,
   })
   instanceModalOpen.value = true
@@ -289,7 +286,6 @@ async function onSubmitInstance() {
       endpoint: instanceState.endpoint,
       accessKey: instanceState.accessKey,
       secretKey: instanceState.secretKey,
-      bucket: instanceState.bucket || undefined,
       enabled: instanceState.enabled,
     }
     if (editingInstance.value) {
@@ -420,7 +416,6 @@ const groupColumns: TableColumn<InstanceGroup>[] = [
 const instanceColumns: TableColumn<MinioInstance>[] = [
   { accessorKey: 'name', header: '名称', cell: ({ row }) => h('span', { class: 'font-medium' }, (row.original as MinioInstance).name) },
   { accessorKey: 'endpoint', header: 'Endpoint', cell: ({ row }) => h('span', { class: 'font-mono text-xs text-muted' }, (row.original as MinioInstance).endpoint) },
-  { accessorKey: 'bucket', header: 'Bucket', cell: ({ row }) => h('span', { class: 'text-muted' }, (row.original as MinioInstance).bucket || '—') },
   {
     id: 'enabled',
     header: '状态',
@@ -640,9 +635,6 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
               </NuxtInput>
             </NuxtFormField>
           </div>
-          <NuxtFormField label="默认 Bucket" name="bucket">
-            <NuxtInput v-model="instanceState.bucket" placeholder="可选，如 ndm" class="w-full" />
-          </NuxtFormField>
           <NuxtFormField name="enabled">
             <NuxtSwitch v-model="instanceState.enabled" label="启用" />
           </NuxtFormField>

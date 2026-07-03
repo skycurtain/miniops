@@ -180,3 +180,159 @@ export async function uploadJson(
     throw new Error(`上传失败: ${response.status} ${response.statusText}${body ? ` - ${body.slice(0, 200)}` : ''}`)
   }
 }
+
+// ---------- AWS SigV4 签名请求（Authorization 头方式） ----------
+
+/**
+ * 生成 AWS SigV4 Authorization 头（用于直接请求 MinIO/S3 API）。
+ * 与预签名 URL 不同，这里把签名放在 Authorization 头里。
+ */
+function signRequest(opts: {
+  method: string
+  endpoint: string
+  path: string
+  queryString: string
+  accessKey: string
+  secretKey: string
+  region: string
+  payloadHash: string
+}): { authorization: string, amzDate: string } {
+  const { method, endpoint, path, queryString, accessKey, secretKey, region, payloadHash } = opts
+  const url = new URL(endpoint.replace(/\/+$/, ''))
+  const host = url.host
+
+  const now = new Date()
+  const amzDate = now.toISOString().replace(/[:-]|\.\d{3}/g, '')
+  const dateStamp = amzDate.slice(0, 8)
+
+  // 规范请求
+  const canonicalHeaders = `host:${host}\nx-amz-content-sha256:${payloadHash}\n`
+  const signedHeaders = 'host;x-amz-content-sha256'
+
+  const canonicalRequest = [
+    method,
+    path,
+    queryString,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join('\n')
+
+  // 待签字符串
+  const scope = `${dateStamp}/${region}/s3/aws4_request`
+  const stringToSign = [
+    'AWS4-HMAC-SHA256',
+    amzDate,
+    scope,
+    createHash('sha256').update(canonicalRequest).digest('hex'),
+  ].join('\n')
+
+  // 签名密钥链
+  const kDate = createHmac('sha256', `AWS4${secretKey}`).update(dateStamp).digest()
+  const kRegion = createHmac('sha256', kDate).update(region).digest()
+  const kService = createHmac('sha256', kRegion).update('s3').digest()
+  const kSigning = createHmac('sha256', kService).update('aws4_request').digest()
+  const signature = createHmac('sha256', kSigning).update(stringToSign).digest('hex')
+
+  const authorization = `AWS4-HMAC-SHA256 Credential=${accessKey}/${scope}, SignedHeaders=${signedHeaders}, Signature=${signature}`
+
+  return { authorization, amzDate }
+}
+
+/** ListBuckets 结果 */
+export interface ListBucketsResult {
+  instanceId: string
+  buckets: string[]
+  error?: string
+}
+
+/**
+ * 获取实例的 bucket 列表。
+ *
+ * 调用 S3 ListBuckets API (GET /)，用 SigV4 Authorization 头签名。
+ * 返回 bucket 名称数组。
+ */
+export async function listBuckets(instance: MinioInstance): Promise<ListBucketsResult> {
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const url = new URL(endpoint)
+  const host = url.host
+  const path = '/'
+  const queryString = ''
+  const payloadHash = createHash('sha256').update('').digest('hex')
+
+  const { authorization, amzDate } = signRequest({
+    method: 'GET',
+    endpoint,
+    path,
+    queryString,
+    accessKey: instance.accessKey,
+    secretKey: instance.secretKey,
+    region: 'us-east-1',
+    payloadHash,
+  })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 10000)
+
+  try {
+    const res = await fetch(`${endpoint}/`, {
+      method: 'GET',
+      headers: {
+        'Host': host,
+        'x-amz-content-sha256': payloadHash,
+        'x-amz-date': amzDate,
+        'Authorization': authorization,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      return {
+        instanceId: instance.id,
+        buckets: [],
+        error: `HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+      }
+    }
+
+    // 解析 XML 响应：<ListBucketsResult><Buckets><Bucket><Name>xxx</Name></Bucket>...</Buckets></ListBucketsResult>
+    const xml = await res.text()
+    const buckets = parseBucketNames(xml)
+    return { instanceId: instance.id, buckets }
+  }
+  catch (e: any) {
+    clearTimeout(timer)
+    const err = e?.name === 'AbortError' ? '请求超时（10s）' : (e?.cause?.code || e?.message || '连接失败')
+    return { instanceId: instance.id, buckets: [], error: err }
+  }
+}
+
+/**
+ * 批量获取多个实例的 bucket 列表（并发）。
+ */
+export async function listBucketsBatch(instances: MinioInstance[]): Promise<ListBucketsResult[]> {
+  return Promise.all(instances.map(inst => listBuckets(inst)))
+}
+
+/**
+ * 从 ListBuckets XML 响应中解析 bucket 名称列表。
+ *
+ * MinIO 返回格式：
+ * <ListBucketsResult>
+ *   <Buckets>
+ *     <Bucket><Name>bucket1</Name><CreationDate>...</CreationDate></Bucket>
+ *     <Bucket><Name>bucket2</Name><CreationDate>...</CreationDate></Bucket>
+ *   </Buckets>
+ * </ListBucketsResult>
+ */
+function parseBucketNames(xml: string): string[] {
+  const names: string[] = []
+  // 用正则提取所有 <Name>...</Name>（在 Bucket 上下文中）
+  const regex = /<Bucket>\s*<Name>([^<]+)<\/Name>/g
+  let match: RegExpExecArray | null
+  while ((match = regex.exec(xml)) !== null) {
+    if (match[1]) names.push(match[1])
+  }
+  return names
+}

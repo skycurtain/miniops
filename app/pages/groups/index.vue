@@ -22,6 +22,14 @@ interface InstanceGroup {
   createdAt: string
   updatedAt: string
 }
+interface ConnectivityResult {
+  instanceId: string
+  instanceName: string
+  endpoint: string
+  online: boolean
+  latency?: number
+  error?: string
+}
 
 // ---------- 数据获取 ----------
 const { data: groups, refresh, pending } = await useFetch<InstanceGroup[]>('/api/groups', {
@@ -30,6 +38,117 @@ const { data: groups, refresh, pending } = await useFetch<InstanceGroup[]>('/api
 
 // 每个组是否展开（展示组内实例）
 const expanded = ref<Record<string, boolean>>({})
+
+// ---------- 连通性测试 ----------
+// 按 instanceId 存储测试结果
+const connectivity = ref<Record<string, ConnectivityResult>>({})
+const testing = ref<Record<string, boolean>>({}) // 单实例测试中
+const testingGroup = ref<Record<string, boolean>>({}) // 全组测试中
+
+async function testOne(groupId: string, inst: MinioInstance) {
+  testing.value[inst.id] = true
+  try {
+    const results = await $fetch<ConnectivityResult[]>(`/api/groups/${groupId}/test`, {
+      method: 'POST',
+      query: { instanceId: inst.id },
+    })
+    if (results[0]) connectivity.value[inst.id] = results[0]
+  }
+  catch (e: any) {
+    const toast = useToast()
+    toast.add({ title: '测试失败', description: e?.data?.statusMessage || e?.message, color: 'error' })
+  }
+  finally {
+    testing.value[inst.id] = false
+  }
+}
+
+async function testAll(g: InstanceGroup) {
+  if (!g.instances.length) return
+  testingGroup.value[g.id] = true
+  try {
+    const results = await $fetch<ConnectivityResult[]>(`/api/groups/${g.id}/test`, {
+      method: 'POST',
+    })
+    for (const r of results) connectivity.value[r.instanceId] = r
+  }
+  catch (e: any) {
+    const toast = useToast()
+    toast.add({ title: '测试失败', description: e?.data?.statusMessage || e?.message, color: 'error' })
+  }
+  finally {
+    testingGroup.value[g.id] = false
+  }
+}
+
+// ---------- 导入 / 导出 ----------
+const importInput = ref<HTMLInputElement | null>(null)
+const importing = ref(false)
+
+function triggerImport() {
+  importInput.value?.click()
+}
+
+async function onImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importing.value = true
+  const toast = useToast()
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    const result = await $fetch<{ added: number; updated: number }>('/api/groups/import', {
+      method: 'POST', body: data,
+    })
+    await refresh()
+    toast.add({
+      title: '导入成功',
+      description: `新增 ${result.added} 条，更新 ${result.updated} 条`,
+      color: 'success',
+    })
+  }
+  catch (e: any) {
+    toast.add({ title: '导入失败', description: e?.data?.statusMessage || e?.message, color: 'error' })
+  }
+  finally {
+    importing.value = false
+    // 重置 input，允许重复选同一文件
+    input.value = ''
+  }
+}
+
+async function onExport() {
+  const toast = useToast()
+  try {
+    const blob = await $fetch<Blob>('/api/groups/export', { responseType: 'blob' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'miniops-groups-export.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  catch (e: any) {
+    toast.add({ title: '导出失败', description: e?.data?.statusMessage || e?.message, color: 'error' })
+  }
+}
+
+async function onDownloadTemplate() {
+  const toast = useToast()
+  try {
+    const blob = await $fetch<Blob>('/api/groups/template', { responseType: 'blob' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = 'miniops-groups-template.json'
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+  catch (e: any) {
+    toast.add({ title: '下载失败', description: e?.data?.statusMessage || e?.message, color: 'error' })
+  }
+}
 
 // ---------- 组表单 ----------
 const groupModalOpen = ref(false)
@@ -310,12 +429,42 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
     meta: { class: { th: 'w-20', td: 'w-20' } },
   },
   {
+    id: 'connectivity',
+    header: '连通性',
+    cell: ({ row }) => {
+      const inst = row.original as MinioInstance
+      const r = connectivity.value[inst.id]
+      const isLoading = testing.value[inst.id]
+      if (isLoading) {
+        return h(NuxtIcon, { name: 'i-lucide-loader-circle', class: 'size-4 animate-spin text-muted' })
+      }
+      if (!r) return h('span', { class: 'text-muted text-xs' }, '—')
+      return h('div', { class: 'flex items-center gap-1' }, [
+        h(NuxtBadge, {
+          color: r.online ? 'success' : 'error',
+          variant: r.online ? 'soft' : 'outline',
+          size: 'sm',
+        }, () => r.online ? '在线' : '离线'),
+        r.online && r.latency != null
+          ? h('span', { class: 'text-xs text-muted' }, `${r.latency}ms`)
+          : r.error ? h('span', { class: 'text-xs text-muted truncate max-w-32', title: r.error }, r.error) : null,
+      ])
+    },
+    meta: { class: { th: 'w-40', td: 'w-40' } },
+  },
+  {
     id: 'actions',
     header: '操作',
     cell: ({ row }) => {
       const inst = row.original as MinioInstance
       const groupId = inst.groupId
       return h('div', { class: 'flex items-center gap-1' }, [
+        h(NuxtButton, {
+          size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-activity',
+          loading: testing.value[inst.id],
+          label: '测试',
+          onClick: () => testOne(groupId, inst),
+        }),
         h(NuxtButton, {
           size: 'xs', color: 'neutral', variant: 'ghost',
           label: inst.enabled ? '禁用' : '启用',
@@ -336,7 +485,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
         }),
       ])
     },
-    meta: { class: { th: 'w-64', td: 'w-64' } },
+    meta: { class: { th: 'w-72', td: 'w-72' } },
   },
 ]
 </script>
@@ -349,9 +498,29 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
         <h1 class="text-2xl font-bold text-highlighted">实例</h1>
         <p class="text-muted">管理实例组与组内 MinIO 实例</p>
       </div>
-      <NuxtButton color="primary" icon="i-lucide-plus" @click="openCreateGroup">
-        新建组
-      </NuxtButton>
+      <div class="flex items-center gap-2">
+        <NuxtTooltip text="下载配置模板，了解 JSON 格式或作为批量创建起点">
+          <NuxtButton color="neutral" variant="ghost" icon="i-lucide-file-down" @click="onDownloadTemplate">
+            模板
+          </NuxtButton>
+        </NuxtTooltip>
+        <NuxtButton color="neutral" variant="outline" icon="i-lucide-download" :loading="importing" @click="triggerImport">
+          导入
+        </NuxtButton>
+        <NuxtButton color="neutral" variant="outline" icon="i-lucide-upload" @click="onExport">
+          导出
+        </NuxtButton>
+        <NuxtButton color="primary" icon="i-lucide-plus" @click="openCreateGroup">
+          新建组
+        </NuxtButton>
+      </div>
+      <input
+        ref="importInput"
+        type="file"
+        accept=".json"
+        class="hidden"
+        @change="onImportFile"
+      />
     </div>
 
     <!-- 组列表（可展开） -->
@@ -379,6 +548,14 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
               <NuxtBadge color="neutral" variant="subtle" size="sm">{{ g.instances.length }} 个实例</NuxtBadge>
             </div>
             <div class="flex items-center gap-1">
+              <NuxtButton
+                v-if="g.instances.length"
+                size="xs" color="neutral" variant="ghost"
+                icon="i-lucide-activity"
+                label="测试全部"
+                :loading="testingGroup[g.id]"
+                @click="testAll(g)"
+              />
               <NuxtButton size="xs" color="neutral" variant="ghost" icon="i-lucide-plus" label="加实例" @click="openCreateInstance(g.id)" />
               <NuxtButton size="xs" color="neutral" variant="ghost" icon="i-lucide-pencil" @click="openEditGroup(g)" />
               <NuxtButton

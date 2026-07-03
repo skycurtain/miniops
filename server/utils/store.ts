@@ -235,6 +235,9 @@ export async function duplicateInstance(groupId: string, instanceId: string): Pr
 
 /** 导入实例组 JSON（覆盖模式：按 id 匹配，有则更新、无则新增） */
 export async function importGroups(incoming: InstanceGroup[]): Promise<ImportResult> {
+  // 导入前校验所有实例字段，任一不合法则整批拒绝
+  validateImportData(incoming)
+
   return withLock(async () => {
     const groups = await readRaw()
     let added = 0
@@ -266,6 +269,48 @@ export async function importGroups(incoming: InstanceGroup[]): Promise<ImportRes
 /** 导出所有实例组 */
 export async function exportGroups(): Promise<InstanceGroup[]> {
   return readRaw()
+}
+
+// ---------- 导入校验 ----------
+
+/**
+ * 校验导入数据的每个实例字段，任一不合法则整批拒绝。
+ * 错误信息指明"组名 > 实例名"便于定位。
+ */
+function validateImportData(incoming: InstanceGroup[]): void {
+  for (const g of incoming) {
+    const groupLabel = `组「${g.name}」`
+    const instances = g.instances ?? []
+    for (const inst of instances) {
+      const instLabel = `${groupLabel} > 实例「${inst.name || inst.id || '?'}」`
+
+      if (!inst.name?.trim()) {
+        throw badRequest(`${instLabel}：name 不能为空`)
+      }
+      if (!inst.endpoint?.trim()) {
+        throw badRequest(`${instLabel}：endpoint 不能为空`)
+      }
+      // endpoint 必须是合法 http(s) URL
+      try {
+        const url = new URL(inst.endpoint)
+        if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+          throw new Error()
+        }
+      }
+      catch {
+        throw badRequest(`${instLabel}：endpoint 必须以 http:// 或 https:// 开头`)
+      }
+      if (!inst.accessKey?.trim()) {
+        throw badRequest(`${instLabel}：accessKey 不能为空`)
+      }
+      if (!inst.secretKey?.trim()) {
+        throw badRequest(`${instLabel}：secretKey 不能为空`)
+      }
+      if (typeof inst.enabled !== 'boolean') {
+        throw badRequest(`${instLabel}：enabled 必须是布尔值`)
+      }
+    }
+  }
 }
 
 // ---------- 错误工厂（与 h3 对齐） ----------

@@ -1,7 +1,7 @@
 /**
  * 分发相关前端逻辑
  *
- * 状态管理：文件、选中目标、bucket、进度矩阵、运行状态。
+ * 状态管理：文件、选中目标、按实例 bucket、进度矩阵、运行状态。
  * submit() 提交任务并建立 SSE 监听。
  */
 
@@ -44,8 +44,9 @@ export function useDispatch() {
   // 选中的目标
   const selectedInstanceIds = ref<Set<string>>(new Set())
 
-  // 分发 bucket（覆盖实例默认值）
-  const bucket = ref<string>('')
+  // 按实例指定 bucket：instanceId → bucket
+  // 初始为空，页面会自动用实例自身的 bucket 填充
+  const instanceBuckets = ref<Record<string, string>>({})
 
   // 进度矩阵：key = `${instanceId}::${fileName}`，value = 状态
   const progress = ref<Record<string, CellStatus>>({})
@@ -54,13 +55,6 @@ export function useDispatch() {
   const isRunning = ref(false)
   const taskSummary = ref<{ total: number; success: number; failed: number } | null>(null)
   let eventSource: EventSource | null = null
-
-  /** bucket 候选项：选中实例的 bucket 去重（排除空值） */
-  const bucketOptions = computed(() => {
-    const set = new Set<string>()
-    // 需要从外部传入 groups 数据
-    return set
-  })
 
   /** 构造矩阵 key */
   function cellKey(instanceId: string, fileName: string): string {
@@ -87,13 +81,39 @@ export function useDispatch() {
     return result
   }
 
-  /** 计算选中实例的 bucket 候选项（去重） */
-  function getBucketOptions(groups: InstanceGroup[]): string[] {
+  /**
+   * 收集所有实例的 bucket 去重，作为选择器候选列表。
+   * 注意：不只收集选中的，而是全部实例的 bucket（用户可能想统一换成别的）。
+   */
+  function getAllBucketOptions(groups: InstanceGroup[]): string[] {
     const set = new Set<string>()
-    for (const inst of getSelectedInstances(groups)) {
-      if (inst.bucket) set.add(inst.bucket)
+    for (const g of groups) {
+      for (const inst of g.instances) {
+        if (inst.bucket) set.add(inst.bucket)
+      }
     }
-    return Array.from(set)
+    return Array.from(set).sort()
+  }
+
+  /** 获取某个实例当前设置的 bucket（instanceBuckets 优先，回退到实例默认） */
+  function getInstanceBucket(inst: MinioInstance): string {
+    return instanceBuckets.value[inst.id] ?? inst.bucket ?? ''
+  }
+
+  /** 设置单个实例的 bucket */
+  function setInstanceBucket(instanceId: string, bucket: string) {
+    instanceBuckets.value[instanceId] = bucket
+  }
+
+  /** 批量设置组内选中实例的 bucket */
+  function setGroupBucket(groups: InstanceGroup[], groupId: string, bucket: string) {
+    const g = groups.find(g => g.id === groupId)
+    if (!g) return
+    for (const inst of g.instances) {
+      if (selectedInstanceIds.value.has(inst.id) && inst.enabled) {
+        instanceBuckets.value[inst.id] = bucket
+      }
+    }
   }
 
   /**
@@ -115,16 +135,34 @@ export function useDispatch() {
       return
     }
 
-    // 重置进度矩阵：所有单元格设为 null
+    // 检查是否所有实例都有 bucket
+    const noBucket = selected.filter(inst => !getInstanceBucket(inst))
+    if (noBucket.length) {
+      const toast = useToast()
+      toast.add({
+        title: '部分实例未指定 bucket',
+        description: noBucket.map(i => i.name).join('、'),
+        color: 'warning',
+      })
+      return
+    }
+
+    // 重置进度矩阵
     progress.value = {}
     taskSummary.value = null
     isRunning.value = true
 
     const toast = useToast()
     try {
-      // 从选中的实例收集 groupIds
       const groupIds = Array.from(new Set(selected.map(i => i.groupId)))
       const instanceIds = selected.map(i => i.id)
+
+      // 构造 instanceBuckets：只传与实例默认值不同的（减少请求体）
+      const buckets: Record<string, string> = {}
+      for (const inst of selected) {
+        const b = getInstanceBucket(inst)
+        if (b) buckets[inst.id] = b
+      }
 
       const res = await $fetch<{ taskId: string }>('/api/dispatch', {
         method: 'POST',
@@ -132,7 +170,7 @@ export function useDispatch() {
           files: files.value,
           groupIds,
           instanceIds,
-          bucket: bucket.value || undefined,
+          instanceBuckets: buckets,
         },
       })
 
@@ -140,7 +178,6 @@ export function useDispatch() {
       eventSource = new EventSource(`/api/dispatch/events?taskId=${res.taskId}`)
 
       eventSource.addEventListener('start', () => {
-        // 标记所有单元格为 'running'
         for (const inst of selected) {
           for (const f of files.value) {
             progress.value[cellKey(inst.id, f.name)] = 'running'
@@ -159,7 +196,6 @@ export function useDispatch() {
         const data = JSON.parse(e.data)
         taskSummary.value = data.summary
         isRunning.value = false
-        // 把仍为 'running' 的单元格标记为 failed（理论上不应有）
         for (const inst of selected) {
           for (const f of files.value) {
             const k = cellKey(inst.id, f.name)
@@ -179,7 +215,6 @@ export function useDispatch() {
         eventSource = null
 
         const s = data.summary
-        // 持久化到 sessionStorage 供总览页读取
         try {
           sessionStorage.setItem('last-dispatch', JSON.stringify({
             total: s.total,
@@ -197,7 +232,6 @@ export function useDispatch() {
       })
 
       eventSource.onerror = () => {
-        // SSE 连接异常（非正常关闭）
         if (isRunning.value) {
           isRunning.value = false
           toast.add({ title: '连接中断', description: 'SSE 连接异常，进度可能不完整', color: 'error' })
@@ -222,7 +256,7 @@ export function useDispatch() {
   return {
     files,
     selectedInstanceIds,
-    bucket,
+    instanceBuckets,
     progress,
     isRunning,
     taskSummary,
@@ -230,7 +264,10 @@ export function useDispatch() {
     cancel,
     getCell,
     getSelectedInstances,
-    getBucketOptions,
+    getAllBucketOptions,
+    getInstanceBucket,
+    setInstanceBucket,
+    setGroupBucket,
     cellKey,
   }
 }

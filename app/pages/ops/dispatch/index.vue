@@ -20,7 +20,7 @@ interface InstanceGroup {
 }
 
 // 数据
-const { data: groups, refresh } = await useFetch<InstanceGroup[]>('/api/groups', {
+const { data: groups } = await useFetch<InstanceGroup[]>('/api/groups', {
   default: () => [],
 })
 
@@ -44,12 +44,10 @@ async function onFilesSelected(event: Event) {
       toast.add({ title: '读取失败', description: file.name, color: 'error' })
     }
   }
-  // 去重（按文件名）
   const existing = new Set(dispatch.files.value.map(f => f.name))
   for (const f of newFiles) {
     if (!existing.has(f.name)) dispatch.files.value.push(f)
   }
-  // 重置 input
   input.value = ''
 }
 
@@ -85,11 +83,9 @@ function toggleGroup(g: InstanceGroup) {
   const set = new Set(dispatch.selectedInstanceIds.value)
   const enabled = g.instances.filter(i => i.enabled)
   if (isGroupAllSelected(g)) {
-    // 全选 → 取消全选
     for (const i of enabled) set.delete(i.id)
   }
   else {
-    // 非全选 → 全选
     for (const i of enabled) set.add(i.id)
   }
   dispatch.selectedInstanceIds.value = set
@@ -98,15 +94,17 @@ function toggleGroup(g: InstanceGroup) {
 // 选中的实例列表
 const selectedInstances = computed(() => dispatch.getSelectedInstances(groups.value ?? []))
 
-// bucket 候选项
-const bucketOptions = computed(() => dispatch.getBucketOptions(groups.value ?? []))
+// bucket 候选项：所有实例的 bucket 去重
+const allBucketOptions = computed(() => dispatch.getAllBucketOptions(groups.value ?? []))
 
-// 自动预填 bucket
-watch(bucketOptions, (opts) => {
-  if (opts.length === 1 && !dispatch.bucket.value && opts[0]) {
-    dispatch.bucket.value = opts[0]
-  }
-})
+// 组级批量 bucket 临时输入
+const groupBucketInput = ref<Record<string, string>>({})
+
+function applyGroupBucket(g: InstanceGroup) {
+  const val = groupBucketInput.value[g.id]
+  if (!val) return
+  dispatch.setGroupBucket(groups.value ?? [], g.id, val)
+}
 
 // ---------- 分发提交 ----------
 async function onSubmit() {
@@ -114,7 +112,6 @@ async function onSubmit() {
 }
 
 // ---------- 进度矩阵 ----------
-// 选中实例 × 文件 的矩阵
 const matrixRows = computed(() => {
   return selectedInstances.value.map(inst => ({
     instance: inst,
@@ -126,16 +123,13 @@ const matrixRows = computed(() => {
   }))
 })
 
-// 矩阵是否可见（有进度数据或正在运行）
 const showMatrix = computed(() => dispatch.isRunning.value || Object.keys(dispatch.progress.value).length > 0)
 
 // ---------- 重试 ----------
-// 重试 = 对失败单元格对应的实例+文件重新提交一个只含该文件的新任务
 async function retryInstance(instanceId: string) {
   const inst = selectedInstances.value.find(i => i.id === instanceId)
   if (!inst) return
 
-  // 收集该实例失败的文件
   const failedFiles = dispatch.files.value.filter(f => {
     const cell = dispatch.getCell(instanceId, f.name)
     return cell && typeof cell === 'object' && cell.status === 'failed'
@@ -150,13 +144,11 @@ async function retryInstance(instanceId: string) {
         files: failedFiles,
         groupIds: [inst.groupId],
         instanceIds: [inst.id],
-        bucket: dispatch.bucket.value || undefined,
+        instanceBuckets: { [inst.id]: dispatch.getInstanceBucket(inst) },
       },
     })
 
-    // 监听重试的 SSE
     const es = new EventSource(`/api/dispatch/events?taskId=${res.taskId}`)
-    // 标记为 running
     for (const f of failedFiles) {
       dispatch.progress.value[dispatch.cellKey(instanceId, f.name)] = 'running'
     }
@@ -219,9 +211,9 @@ async function retryInstance(instanceId: string) {
       </div>
     </div>
 
-    <!-- 2. 目标选择 -->
+    <!-- 2. 选择目标 + bucket -->
     <div class="rounded-lg border border-default bg-default p-4">
-      <h2 class="mb-3 font-semibold text-highlighted">2. 选择目标</h2>
+      <h2 class="mb-3 font-semibold text-highlighted">2. 选择目标 &amp; Bucket</h2>
       <template v-for="g in groups" :key="g.id">
         <div class="rounded-md border border-default">
           <!-- 组行 -->
@@ -246,6 +238,26 @@ async function retryInstance(instanceId: string) {
                 {{ g.instances.filter(i => i.enabled).length }} 个启用
               </NuxtBadge>
             </button>
+            <!-- 组级批量 bucket -->
+            <div v-if="isGroupPartialSelected(g) || isGroupAllSelected(g)" class="flex items-center gap-1">
+              <NuxtSelectMenu
+                v-model="groupBucketInput[g.id]"
+                :items="allBucketOptions.map(b => ({ label: b, value: b }))"
+                value-key="value"
+                placeholder="批量设 bucket"
+                class="w-36"
+                :disabled="dispatch.isRunning.value"
+              />
+              <NuxtButton
+                size="xs"
+                color="neutral"
+                variant="ghost"
+                icon="i-lucide-check"
+                label="应用"
+                :disabled="!groupBucketInput[g.id] || dispatch.isRunning.value"
+                @click="applyGroupBucket(g)"
+              />
+            </div>
           </div>
           <!-- 实例行 -->
           <div v-if="expanded[g.id]" class="border-t border-default">
@@ -263,8 +275,21 @@ async function retryInstance(instanceId: string) {
               <NuxtIcon name="i-lucide-server" class="size-4 text-muted" />
               <span class="text-sm font-medium">{{ inst.name }}</span>
               <span class="font-mono text-xs text-muted">{{ inst.endpoint }}</span>
-              <NuxtBadge v-if="inst.bucket" color="neutral" variant="outline" size="sm">{{ inst.bucket }}</NuxtBadge>
               <NuxtBadge v-if="!inst.enabled" color="neutral" variant="outline" size="sm">禁用</NuxtBadge>
+              <div class="flex-1" />
+              <!-- 实例级 bucket 选择器（仅选中时显示） -->
+              <div v-if="isInstanceSelected(inst) && inst.enabled" class="flex items-center gap-1">
+                <span class="text-xs text-muted">bucket</span>
+                <NuxtSelectMenu
+                  :model-value="dispatch.getInstanceBucket(inst)"
+                  :items="allBucketOptions.map(b => ({ label: b, value: b }))"
+                  value-key="value"
+                  placeholder="选择 bucket"
+                  class="w-32"
+                  :disabled="dispatch.isRunning.value"
+                  @update:model-value="(val: string) => dispatch.setInstanceBucket(inst.id, val)"
+                />
+              </div>
             </div>
             <div v-if="!g.instances.length" class="px-6 py-3 text-sm text-muted">该组无实例</div>
           </div>
@@ -272,20 +297,8 @@ async function retryInstance(instanceId: string) {
       </template>
     </div>
 
-    <!-- 3. bucket + 提交 -->
-    <div class="flex items-end gap-4">
-      <div class="flex flex-col gap-1">
-        <label class="text-sm font-medium text-muted">Bucket</label>
-        <NuxtInput
-          v-model="dispatch.bucket.value"
-          placeholder="留空则用实例默认 bucket"
-          class="w-64"
-          :disabled="dispatch.isRunning.value"
-        />
-      </div>
-      <div v-if="bucketOptions.length > 1" class="text-xs text-muted pb-2">
-        选中实例有多个 bucket：{{ bucketOptions.join('、') }}
-      </div>
+    <!-- 3. 提交栏 -->
+    <div class="flex items-center gap-4">
       <div class="flex-1" />
       <div class="text-sm text-muted">
         已选 <span class="font-semibold text-highlighted">{{ selectedInstances.length }}</span> 个实例，
@@ -329,6 +342,7 @@ async function retryInstance(instanceId: string) {
             <tr class="border-b border-default">
               <th class="px-3 py-2 text-left font-semibold text-highlighted">实例</th>
               <th class="px-3 py-2 text-left font-semibold text-highlighted">组</th>
+              <th class="px-3 py-2 text-left font-semibold text-highlighted">Bucket</th>
               <th
                 v-for="f in dispatch.files.value"
                 :key="f.name"
@@ -347,6 +361,7 @@ async function retryInstance(instanceId: string) {
             >
               <td class="px-3 py-2 font-medium">{{ row.instance.name }}</td>
               <td class="px-3 py-2 text-muted">{{ row.groupName }}</td>
+              <td class="px-3 py-2 text-muted font-mono text-xs">{{ dispatch.getInstanceBucket(row.instance) }}</td>
               <td
                 v-for="cell in row.cells"
                 :key="cell.fileName"

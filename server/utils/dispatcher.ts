@@ -97,7 +97,7 @@ export async function executeDispatch(task: DispatchTask): Promise<void> {
   while (queue.length > 0 || running.length > 0) {
     while (running.length < CONCURRENCY && queue.length > 0) {
       const instance = queue.shift()!
-      const p = processInstance(task.id, instance, files, bucket)
+      const p = processInstance(task.id, instance, files, bucket, task.request.instanceBuckets)
       running.push(p)
       p.finally(() => {
         const idx = running.indexOf(p)
@@ -129,8 +129,10 @@ async function processInstance(
   instance: MinioInstance,
   files: { name: string; content: string }[],
   bucketOverride: string | undefined,
+  instanceBuckets?: Record<string, string>,
 ): Promise<void> {
-  const targetBucket = bucketOverride || instance.bucket
+  // 优先级：instanceBuckets[instanceId] > bucketOverride > instance.bucket
+  const targetBucket = instanceBuckets?.[instance.id] || bucketOverride || instance.bucket
   const task = taskRegistry.get(taskId)!.task
 
   for (const file of files) {

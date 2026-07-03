@@ -71,8 +71,10 @@ export interface DispatchRequest {
   groupIds: string[]
   /** 单独勾选的实例 ID（与 groupIds 合并去重） */
   instanceIds: string[]
-  /** 分发目标 bucket，覆盖实例默认值；两者皆空则报错 */
+  /** 分发目标 bucket，全局覆盖实例默认值（向后兼容） */
   bucket?: string
+  /** 按实例指定 bucket，优先级高于 bucket 和实例默认值 */
+  instanceBuckets?: Record<string, string>
 }
 
 /** 单个文件分发结果 */

@@ -93,11 +93,13 @@ export function useDispatch() {
   function setGroupBucket(groups: InstanceGroup[], groupId: string, bucket: string) {
     const g = groups.find(g => g.id === groupId)
     if (!g) return
+    const next = { ...instanceBuckets.value }
     for (const inst of g.instances) {
       if (selectedInstanceIds.value.has(inst.id) && inst.enabled) {
-        instanceBuckets.value[inst.id] = bucket
+        next[inst.id] = bucket
       }
     }
+    instanceBuckets.value = next
   }
 
   /**

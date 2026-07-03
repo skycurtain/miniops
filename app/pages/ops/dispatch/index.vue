@@ -247,21 +247,12 @@ async function retryInstance(instanceId: string) {
             <!-- 组级批量 bucket（交集候选） -->
             <div v-if="isGroupPartialSelected(g) || isGroupAllSelected(g)" class="flex items-center gap-1">
               <NuxtSelectMenu
-                v-model="groupBucketInput[g.id]"
                 :items="getGroupBucketOptions(g).map(b => ({ label: b, value: b }))"
                 value-key="value"
                 :placeholder="getGroupBucketOptions(g).length ? '批量设 bucket' : '无公共 bucket'"
                 class="w-36"
                 :disabled="dispatch.isRunning.value || !getGroupBucketOptions(g).length"
-              />
-              <NuxtButton
-                size="xs"
-                color="neutral"
-                variant="ghost"
-                icon="i-lucide-check"
-                label="应用"
-                :disabled="!groupBucketInput[g.id] || dispatch.isRunning.value"
-                @click="applyGroupBucket(g)"
+                @update:model-value="(val: string) => { groupBucketInput[g.id] = val; applyGroupBucket(g) }"
               />
             </div>
           </div>

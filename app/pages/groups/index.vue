@@ -118,6 +118,8 @@ const instanceState = reactive<{
 }>({
   name: '', endpoint: '', accessKey: '', secretKey: '', bucket: '', enabled: true,
 })
+// Secret Key 可见性切换
+const secretVisible = ref(false)
 const instanceSaving = ref(false)
 
 const instanceSchema = v.object({
@@ -436,7 +438,24 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
               <NuxtInput v-model="instanceState.accessKey" class="w-full" />
             </NuxtFormField>
             <NuxtFormField label="Secret Key" name="secretKey" required>
-              <NuxtInput v-model="instanceState.secretKey" type="password" class="w-full" />
+              <NuxtInput
+                v-model="instanceState.secretKey"
+                :type="secretVisible ? 'text' : 'password'"
+                class="w-full"
+                :ui="{ trailing: 'pe-1' }"
+              >
+                <template #trailing>
+                  <NuxtButton
+                    color="neutral"
+                    variant="link"
+                    size="sm"
+                    :icon="secretVisible ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    :aria-label="secretVisible ? '隐藏' : '显示'"
+                    tabindex="-1"
+                    @click="secretVisible = !secretVisible"
+                  />
+                </template>
+              </NuxtInput>
             </NuxtFormField>
           </div>
           <NuxtFormField label="默认 Bucket" name="bucket">

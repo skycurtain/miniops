@@ -7,5 +7,9 @@ export default defineNuxtConfig({
   ui: {
     prefix: 'Nuxt',
     fonts: false,
-  }
+  },
+  colorMode: {
+    preference: 'light',
+    fallback: 'light',
+  },
 })

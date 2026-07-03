@@ -12,13 +12,15 @@
  *   const ok = await modal.open({ title, description, ... })
  *   if (!ok) return
  */
+type ButtonColor = 'primary' | 'secondary' | 'success' | 'info' | 'warning' | 'error' | 'neutral'
+
 interface ConfirmDialogProps {
   open?: boolean
   title?: string
   description?: string
   confirmText?: string
   cancelText?: string
-  confirmColor?: string
+  confirmColor?: ButtonColor
   confirmIcon?: string
   cancelIcon?: string
 }
@@ -26,7 +28,7 @@ interface ConfirmDialogProps {
 const props = withDefaults(defineProps<ConfirmDialogProps>(), {
   confirmText: '确认',
   cancelText: '取消',
-  confirmColor: 'primary',
+  confirmColor: 'primary' as ButtonColor,
 })
 
 const emits = defineEmits<{

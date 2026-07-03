@@ -9,8 +9,9 @@ export default defineEventHandler(async (event) => {
 
   const body = await readBody<Partial<CreateInstanceInput>>(event)
   assertNonEmpty(body?.name, '实例名称')
-  assertNonEmpty(body?.endpoint, 'endpoint')
-  assertEndpoint(body!.endpoint)
+  const endpoint = body?.endpoint
+  assertNonEmpty(endpoint, 'endpoint')
+  assertEndpoint(endpoint!)
   assertNonEmpty(body?.accessKey, 'accessKey')
   assertNonEmpty(body?.secretKey, 'secretKey')
 

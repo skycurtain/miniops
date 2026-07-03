@@ -60,3 +60,55 @@ export interface ImportResult {
   added: number
   updated: number
 }
+
+// ---------- 分发相关类型 ----------
+
+/** 分发任务请求 */
+export interface DispatchRequest {
+  /** 要分发的文件列表（文件名 + 内容） */
+  files: { name: string; content: string }[]
+  /** 选中的实例组 ID（展开为组内所有 enabled 实例） */
+  groupIds: string[]
+  /** 单独勾选的实例 ID（与 groupIds 合并去重） */
+  instanceIds: string[]
+  /** 分发目标 bucket，覆盖实例默认值；两者皆空则报错 */
+  bucket?: string
+}
+
+/** 单个文件分发结果 */
+export interface DispatchResult {
+  groupId: string
+  instanceId: string
+  instanceName: string
+  fileName: string
+  status: 'success' | 'failed'
+  error?: string
+  /** 耗时（毫秒） */
+  duration?: number
+}
+
+/** 分发任务 */
+export interface DispatchTask {
+  id: string
+  request: DispatchRequest
+  status: 'pending' | 'running' | 'done'
+  /** 展开后的目标实例列表（去重后） */
+  resolvedInstances: MinioInstance[]
+  results: DispatchResult[]
+  createdAt: string
+  finishedAt?: string
+}
+
+/** SSE 推送的事件 */
+export interface DispatchEvent {
+  type: 'start' | 'progress' | 'complete'
+  taskId: string
+  /** progress 事件携带 */
+  result?: DispatchResult
+  /** complete 事件携带 */
+  summary?: {
+    total: number
+    success: number
+    failed: number
+  }
+}

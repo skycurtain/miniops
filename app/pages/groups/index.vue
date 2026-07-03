@@ -3,6 +3,11 @@ import * as v from 'valibot'
 import type { TableColumn } from '@nuxt/ui'
 import ConfirmDialog from '~/components/ConfirmDialog.vue'
 
+// h() 渲染函数中使用的组件（resolveComponent 避免 TS2304）
+const NuxtBadgeC = resolveComponent('NuxtBadge')
+const NuxtButtonC = resolveComponent('NuxtButton')
+const NuxtIconC = resolveComponent('NuxtIcon')
+
 interface MinioInstance {
   id: string
   groupId: string
@@ -382,7 +387,7 @@ const groupColumns: TableColumn<InstanceGroup>[] = [
   {
     id: 'count',
     header: '实例数',
-    cell: ({ row }) => h(NuxtBadge, { color: 'neutral', variant: 'subtle' }, () => String((row.original as InstanceGroup).instances.length)),
+    cell: ({ row }) => h(NuxtBadgeC, { color: 'neutral', variant: 'subtle' }, () => String((row.original as InstanceGroup).instances.length)),
     meta: { class: { th: 'w-24', td: 'w-24' } },
   },
   {
@@ -391,18 +396,18 @@ const groupColumns: TableColumn<InstanceGroup>[] = [
     cell: ({ row }) => {
       const g = row.original as InstanceGroup
       return h('div', { class: 'flex items-center gap-1' }, [
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-plus',
           label: '加实例',
           onClick: (e: Event) => { e.stopPropagation(); openCreateInstance(g.id) },
         }),
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-pencil',
           onClick: (e: Event) => { e.stopPropagation(); openEditGroup(g) },
         }),
         g.isDefault
           ? h('span', { class: 'text-xs text-muted px-1' }, '内置')
-          : h(NuxtButton, {
+          : h(NuxtButtonC, {
               size: 'xs', color: 'error', variant: 'ghost', icon: 'i-lucide-trash-2',
               onClick: (e: Event) => { e.stopPropagation(); onDeleteGroup(g) },
             }),
@@ -421,7 +426,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
     header: '状态',
     cell: ({ row }) => {
       const inst = row.original as MinioInstance
-      return h(NuxtBadge, {
+      return h(NuxtBadgeC, {
         color: inst.enabled ? 'success' : 'neutral',
         variant: inst.enabled ? 'soft' : 'outline',
       }, () => inst.enabled ? '启用' : '禁用')
@@ -436,11 +441,11 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
       const r = connectivity.value[inst.id]
       const isLoading = testing.value[inst.id]
       if (isLoading) {
-        return h(NuxtIcon, { name: 'i-lucide-loader-circle', class: 'size-4 animate-spin text-muted' })
+        return h(NuxtIconC, { name: 'i-lucide-loader-circle', class: 'size-4 animate-spin text-muted' })
       }
       if (!r) return h('span', { class: 'text-muted text-xs' }, '—')
       return h('div', { class: 'flex items-center gap-1' }, [
-        h(NuxtBadge, {
+        h(NuxtBadgeC, {
           color: r.online ? 'success' : 'error',
           variant: r.online ? 'soft' : 'outline',
           size: 'sm',
@@ -459,27 +464,27 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
       const inst = row.original as MinioInstance
       const groupId = inst.groupId
       return h('div', { class: 'flex items-center gap-1' }, [
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-activity',
           loading: testing.value[inst.id],
           label: '测试',
           onClick: () => testOne(groupId, inst),
         }),
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost',
           label: inst.enabled ? '禁用' : '启用',
           icon: inst.enabled ? 'i-lucide-circle-off' : 'i-lucide-circle-check',
           onClick: () => onToggleEnabled({ id: groupId } as InstanceGroup, inst),
         }),
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-pencil',
           onClick: () => openEditInstance(groupId, inst),
         }),
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost', icon: 'i-lucide-copy',
           onClick: () => onDuplicateInstance(groupId, inst),
         }),
-        h(NuxtButton, {
+        h(NuxtButtonC, {
           size: 'xs', color: 'error', variant: 'ghost', icon: 'i-lucide-trash-2',
           onClick: () => onDeleteInstance(groupId, inst),
         }),
@@ -593,7 +598,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
             <NuxtTextarea v-model="groupState.description" placeholder="可选" :rows="2" class="w-full" />
           </NuxtFormField>
           <div class="flex justify-end gap-2 pt-2">
-            <NuxtButton variant="ghost" color="neutral" label="取消" @click="groupModalOpen = false" />
+            <NuxtButton variant="ghost" color="neutral" label="取消" @click="() => { groupModalOpen = false }" />
             <NuxtButton type="submit" color="primary" :loading="groupSaving" label="保存" />
           </div>
         </NuxtForm>
@@ -629,7 +634,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
                     :icon="secretVisible ? 'i-lucide-eye-off' : 'i-lucide-eye'"
                     :aria-label="secretVisible ? '隐藏' : '显示'"
                     tabindex="-1"
-                    @click="secretVisible = !secretVisible"
+                    @click="() => { secretVisible = !secretVisible }"
                   />
                 </template>
               </NuxtInput>
@@ -642,7 +647,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
             <NuxtSwitch v-model="instanceState.enabled" label="启用" />
           </NuxtFormField>
           <div class="flex justify-end gap-2 pt-2">
-            <NuxtButton variant="ghost" color="neutral" label="取消" @click="instanceModalOpen = false" />
+            <NuxtButton variant="ghost" color="neutral" label="取消" @click="() => { instanceModalOpen = false }" />
             <NuxtButton type="submit" color="primary" :loading="instanceSaving" label="保存" />
           </div>
         </NuxtForm>

@@ -6,7 +6,6 @@ interface MinioInstance {
   endpoint: string
   accessKey: string
   secretKey: string
-  bucket?: string
   enabled: boolean
 }
 interface InstanceGroup {

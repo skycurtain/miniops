@@ -1,7 +1,8 @@
 /**
- * 分发相关前端逻辑
+ * 分发相关前端逻辑（V2）
  *
- * 状态管理：文件、选中目标、按实例 bucket（异步从 MinIO 拉取）、进度矩阵、运行状态。
+ * 状态管理：文件（StoredFile[]）、异步上传、选中目标、按实例 bucket、
+ * 目标前缀、进度聚合视图、运行状态。
  */
 
 interface MinioInstance {
@@ -32,6 +33,17 @@ interface DispatchResult {
   duration?: number
 }
 
+/** 暂存的上传文件（与后端 StoredFile 一致） */
+interface StoredFile {
+  id: string
+  name: string
+  objectKey: string
+  size: number
+  contentType: string
+  storedPath: string
+  uploadedAt: string
+}
+
 /** 单元格状态 */
 type CellStatus = DispatchResult | 'running' | null
 
@@ -42,8 +54,13 @@ interface BucketLoadState {
   error?: string
 }
 
+/** 文件上传状态 */
+type UploadStatus = 'uploading' | 'ready' | 'error'
+
 export function useDispatch() {
-  const files = ref<{ name: string; content: string }[]>([])
+  const files = ref<StoredFile[]>([])
+  const prefix = ref('')
+  const uploadStates = ref<Record<string, UploadStatus>>({})
   const selectedInstanceIds = ref<Set<string>>(new Set())
 
   // 按实例指定 bucket
@@ -78,6 +95,73 @@ export function useDispatch() {
     }
     return result
   }
+
+  // ---------- 文件上传管理 ----------
+
+  /** 上传单个文件到暂存，返回 StoredFile */
+  async function uploadFile(file: File, objectKey?: string): Promise<StoredFile> {
+    const form = new FormData()
+    form.append('file', file)
+    if (objectKey) form.append('objectKey', objectKey)
+    return await $fetch<StoredFile>('/api/uploads', { method: 'POST', body: form })
+  }
+
+  /** 添加多个文件（普通文件选择） */
+  async function addFiles(fileList: FileList) {
+    for (const file of Array.from(fileList)) {
+      const tempKey = `temp-${file.name}-${file.size}`
+      uploadStates.value[tempKey] = 'uploading'
+      try {
+        const stored = await uploadFile(file)
+        files.value.push(stored)
+        uploadStates.value[stored.id] = 'ready'
+        delete uploadStates.value[tempKey]
+      }
+      catch {
+        uploadStates.value[tempKey] = 'error'
+      }
+    }
+  }
+
+  /** 添加文件夹（webkitdirectory，去顶层目录名） */
+  async function addFolder(fileList: FileList) {
+    for (const file of Array.from(fileList)) {
+      const objectKey = file.webkitRelativePath || file.name
+      const tempKey = `temp-${objectKey}-${file.size}`
+      uploadStates.value[tempKey] = 'uploading'
+      try {
+        const stored = await uploadFile(file, objectKey)
+        files.value.push(stored)
+        uploadStates.value[stored.id] = 'ready'
+        delete uploadStates.value[tempKey]
+      }
+      catch {
+        uploadStates.value[tempKey] = 'error'
+      }
+    }
+  }
+
+  /** 移除已上传的文件（前端 + 后端暂存删除） */
+  async function removeUpload(id: string) {
+    try {
+      await $fetch(`/api/uploads/${id}`, { method: 'DELETE' })
+    }
+    catch { /* 容错：后端删失败也从前端移除 */ }
+    files.value = files.value.filter(f => f.id !== id)
+    delete uploadStates.value[id]
+  }
+
+  /** 获取文件的上传状态 */
+  function getUploadStatus(id: string): UploadStatus | undefined {
+    return uploadStates.value[id]
+  }
+
+  /** 是否所有文件都已就绪（无上传中/错误） */
+  const allFilesReady = computed(() => {
+    return files.value.length > 0 && files.value.every(f => uploadStates.value[f.id] === 'ready')
+  })
+
+  // ---------- Bucket 管理（与 MVP 一致） ----------
 
   /** 获取实例当前设置的 bucket */
   function getInstanceBucket(inst: MinioInstance): string {
@@ -181,12 +265,37 @@ export function useDispatch() {
     return [...intersection].sort()
   }
 
+  // ---------- 进度聚合 ----------
+
+  /** 计算实例的聚合进度 */
+  function getInstanceProgress(instanceId: string): { completed: number; total: number; failed: number } {
+    let completed = 0
+    let failed = 0
+    for (const f of files.value) {
+      const cell = progress.value[cellKey(instanceId, f.objectKey)]
+      if (cell && cell !== 'running') {
+        completed++
+        if (typeof cell === 'object' && cell.status === 'failed') failed++
+      }
+    }
+    return { completed, total: files.value.length, failed }
+  }
+
+  // ---------- 分发提交 ----------
+
   /** 提交分发任务 */
   async function submit(groups: InstanceGroup[]) {
     if (isRunning.value) return
     if (!files.value.length) {
       const toast = useToast()
       toast.add({ title: '请先选择文件', color: 'warning' })
+      return
+    }
+
+    // 校验所有文件已上传完成
+    if (!allFilesReady.value) {
+      const toast = useToast()
+      toast.add({ title: '部分文件未上传完成', description: '请等待所有文件上传就绪', color: 'warning' })
       return
     }
 
@@ -215,7 +324,6 @@ export function useDispatch() {
 
     const toast = useToast()
     try {
-      const groupIds = Array.from(new Set(selected.map(i => i.groupId)))
       const instanceIds = selected.map(i => i.id)
 
       const buckets: Record<string, string> = {}
@@ -227,10 +335,11 @@ export function useDispatch() {
       const res = await $fetch<{ taskId: string }>('/api/dispatch', {
         method: 'POST',
         body: {
-          files: files.value,
-          groupIds,
+          files: files.value.map(f => ({ id: f.id, objectKey: f.objectKey })),
+          groupIds: [],
           instanceIds,
           instanceBuckets: buckets,
+          prefix: prefix.value || undefined,
         },
       })
 
@@ -239,7 +348,7 @@ export function useDispatch() {
       eventSource.addEventListener('start', () => {
         for (const inst of selected) {
           for (const f of files.value) {
-            progress.value[cellKey(inst.id, f.name)] = 'running'
+            progress.value[cellKey(inst.id, f.objectKey)] = 'running'
           }
         }
       })
@@ -257,13 +366,13 @@ export function useDispatch() {
         isRunning.value = false
         for (const inst of selected) {
           for (const f of files.value) {
-            const k = cellKey(inst.id, f.name)
+            const k = cellKey(inst.id, f.objectKey)
             if (progress.value[k] === 'running') {
               progress.value[k] = {
                 groupId: inst.groupId,
                 instanceId: inst.id,
                 instanceName: inst.name,
-                fileName: f.name,
+                fileName: f.objectKey,
                 status: 'failed',
                 error: '未收到结果',
               }
@@ -313,14 +422,21 @@ export function useDispatch() {
 
   return {
     files,
+    prefix,
+    uploadStates,
     selectedInstanceIds,
     instanceBuckets,
     instanceBucketOptions,
     progress,
     isRunning,
     taskSummary,
+    allFilesReady,
     submit,
     cancel,
+    addFiles,
+    addFolder,
+    removeUpload,
+    getUploadStatus,
     getCell,
     getSelectedInstances,
     getInstanceBucket,
@@ -329,6 +445,7 @@ export function useDispatch() {
     loadBuckets,
     getInstanceBucketOptions,
     getGroupBucketIntersection,
+    getInstanceProgress,
     cellKey,
   }
 }

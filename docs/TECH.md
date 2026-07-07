@@ -70,11 +70,11 @@ export interface MinioInstance {
   accessKey: string
   /** 秘密密钥 */
   secretKey: string
-  /** 该实例最常用的默认 bucket，如 ndm；分发时可覆盖 */
-  bucket?: string
   /** 是否启用 */
   enabled: boolean
 }
+
+> **已知技术债**：早期设计中 `MinioInstance` 有 `bucket` 字段，已废弃。分发时通过 `instanceBuckets` 按实例指定 bucket，bucket 候选实时从 MinIO `ListBuckets` API 拉取。
 
 /** 实例组 */
 export interface InstanceGroup {
@@ -94,16 +94,38 @@ export interface InstanceGroup {
   updatedAt: string
 }
 
+/** 暂存的上传文件 */
+export interface StoredFile {
+  /** 文件 ID */
+  id: string
+  /** 原始文件名 */
+  name: string
+  /** 分发到 MinIO 时的对象 key */
+  objectKey: string
+  /** 文件大小（字节） */
+  size: number
+  /** 推断的 MIME 类型 */
+  contentType: string
+  /** 磁盘相对路径（相对 UPLOAD_DIR） */
+  storedPath: string
+  /** 上传完成时间（ISO 字符串） */
+  uploadedAt: string
+}
+
 /** 分发任务请求 */
 export interface DispatchRequest {
-  /** 要分发的文件列表（文件名 + 内容） */
-  files: { name: string; content: string }[]
+  /** 要分发的文件列表（引用暂存文件的 id，可选覆盖 objectKey） */
+  files: { id: string; objectKey?: string }[]
   /** 选中的实例组 ID（展开为组内所有 enabled 实例） */
   groupIds: string[]
   /** 单独勾选的实例 ID（与 groupIds 合并去重） */
   instanceIds: string[]
-  /** 分发目标 bucket，覆盖实例默认值；两者皆空则报错 */
+  /** 分发目标 bucket，全局覆盖 */
   bucket?: string
+  /** 按实例指定 bucket，优先级高于 bucket */
+  instanceBuckets?: Record<string, string>
+  /** 可选目标前缀，分发到 bucket/prefix/ 下 */
+  prefix?: string
 }
 
 /** 单个文件分发结果 */
@@ -125,6 +147,8 @@ export interface DispatchTask {
   status: 'pending' | 'running' | 'done'
   /** 展开后的目标实例列表（去重后） */
   resolvedInstances: MinioInstance[]
+  /** 展开后的文件列表（从 request.files 的 id 解析出的 StoredFile） */
+  resolvedFiles: StoredFile[]
   results: DispatchResult[]
   createdAt: string
   finishedAt?: string
@@ -321,7 +345,32 @@ export async function exportGroups(): Promise<InstanceGroup[]>
 **响应** `200 OK` `Content-Type: application/json`
 `Content-Disposition: attachment; filename="miniops-groups-export.json"`
 
-### 3.5 文件分发
+### 3.5 文件上传暂存
+
+#### POST `/api/uploads`
+multipart 上传单个文件到暂存目录，返回 `StoredFile`。
+
+**请求体** `multipart/form-data`，字段名 `file`
+
+**响应** `201 Created`
+```json
+{
+  "id": "uf-xxx",
+  "name": "config.json",
+  "objectKey": "config.json",
+  "size": 1024,
+  "contentType": "application/json",
+  "storedPath": "uf-xxx/config.json",
+  "uploadedAt": "2026-07-07T..."
+}
+```
+
+#### DELETE `/api/uploads/:id`
+删除暂存文件（磁盘 + 内存记录）。
+
+**响应** `204 No Content`
+
+### 3.6 文件分发
 
 #### POST `/api/dispatch`
 提交分发任务。后端立即创建任务并返回 taskId，后台异步执行。
@@ -330,11 +379,12 @@ export async function exportGroups(): Promise<InstanceGroup[]>
 ```json
 {
   "files": [
-    { "name": "ndm-lines.json", "content": "[...]" }
+    { "id": "uf-xxx", "objectKey": "config.json" }
   ],
   "groupIds": ["grp-001"],
   "instanceIds": [],
-  "bucket": "ndm"
+  "instanceBuckets": { "inst-001": "ndm" },
+  "prefix": "config/v2/"
 }
 ```
 
@@ -363,57 +413,59 @@ data: {"type":"complete","taskId":"task-xxx","summary":{"total":5,"success":4,"f
 
 ### 4.1 `server/utils/minio.ts`
 
+所有 MinIO 操作均为纯 `node:crypto` + 原生 `fetch` 的手写 SigV4 实现，零 SDK 依赖。
+
 ```ts
-import { S3Client } from 'bun';
-import type { MinioInstance } from '../types';
+import { createHash, createHmac } from 'node:crypto'
+import { statSync } from 'node:fs'
+import { open, readFile } from 'node:fs/promises'
+import type { MinioInstance } from '../types'
 
-/**
- * 为指定实例创建 S3Client（每次新建，因为每个实例 endpoint/密钥不同）
- */
-export function createClient(instance: MinioInstance, bucket: string): S3Client {
-  return new S3Client({
-    accessKeyId: instance.accessKey,
-    secretAccessKey: instance.secretKey,
-    bucket,
-    endpoint: instance.endpoint,
-  });
-}
+/** 生成 AWS SigV4 预签名 PUT URL */
+function presignPutUrl(opts: { ... }): string { ... }
 
-/**
- * 上传 JSON 文件到 MinIO。
- * 用预签名 PUT URL 上传，手动指定 Content-Type: application/json。
- * 原因：Bun S3Client.write() 会自动追加 ;charset=utf-8，
- * 导致 MinIO Console 预览失败（触发下载）。
- */
-export async function uploadJson(
+/** 生成 AWS SigV4 Authorization 头（通用，支持任意 method/query/payloadHash） */
+function signRequest(opts: { ... }): { authorization: string, amzDate: string } { ... }
+
+/** 上传 JSON 文件（V1，保留向后兼容） */
+export async function uploadJson(instance, bucket, filename, content: string): Promise<void> { ... }
+
+/** V2 统一上传入口：从磁盘文件上传，按大小自动选择单次 PUT 或 multipart */
+export async function uploadObject(
   instance: MinioInstance,
   bucket: string,
-  filename: string,
-  content: string,
+  objectKey: string,
+  localPath: string,
+  contentType: string,
 ): Promise<void> {
-  const client = createClient(instance, bucket);
-  const file = client.file(filename);
-  const presignedUrl = file.presign({ method: 'PUT', expiresIn: 3600 });
-
-  const response = await fetch(presignedUrl, {
-    method: 'PUT',
-    body: content,
-    headers: { 'Content-Type': 'application/json' },
-  });
-
-  if (!response.ok) {
-    throw new Error(`Upload failed: ${response.status} ${response.statusText}`);
+  const size = statSync(localPath).size
+  if (size < MULTIPART_THRESHOLD) {
+    await uploadSmall(instance, bucket, objectKey, localPath, contentType)
+  } else {
+    await uploadLarge(instance, bucket, objectKey, localPath, contentType)
   }
 }
 
-/**
- * 测试实例连通性（尝试 headBucket / listBuckets）
- */
-export async function testConnectivity(instance: MinioInstance): Promise<ConnectivityResult> {
-  // 用 fetch 直接请求 endpoint 的 /minio/health/live
-  // 或用 S3Client 发一个 listBuckets 请求
-  // 返回 { online, latency, error }
-}
+/** 小文件：复用 presignPutUrl，body 从磁盘读取 */
+async function uploadSmall(...) { ... }
+
+/** 大文件：手写 S3 Multipart Upload 三步（Initiate → UploadPart ×N → Complete） */
+async function uploadLarge(...) { ... }
+
+/** 中止 multipart upload（清理 MinIO 侧残留） */
+async function abortMultipartUpload(...) { ... }
+
+/** Content-Type 推断 */
+export function inferContentType(filename: string): string { ... }
+
+/** objectKey 清洗（防 path traversal） */
+export function sanitizeObjectKey(key: string): string { ... }
+
+/** ListBuckets（实时拉取实例的 bucket 列表） */
+export async function listBuckets(instance: MinioInstance): Promise<ListBucketsResult> { ... }
+
+/** 连通性测试（请求 /minio/health/live） */
+export async function testConnectivity(instance: MinioInstance): Promise<ConnectivityResult> { ... }
 ```
 
 ### 4.2 分发执行器
@@ -427,52 +479,31 @@ export async function testConnectivity(instance: MinioInstance): Promise<Connect
  * - 每个实例内文件串行上传
  * - 每个文件完成后通过 SSE 推送进度
  */
-export async function dispatch(
-  task: DispatchTask,
-  onProgress: (result: DispatchResult) => void,
-): Promise<void> {
-  const instances = task.resolvedInstances;
-  const files = task.request.files;
-  const bucket = task.request.bucket;
-
-  // 并发控制：信号量
-  const CONCURRENCY = 5;
-  const queue = [...instances];
-  const running: Promise<void>[] = [];
-
-  while (queue.length > 0 || running.length > 0) {
-    while (running.length < CONCURRENCY && queue.length > 0) {
-      const instance = queue.shift()!;
-      const p = processInstance(instance, files, bucket, onProgress);
-      running.push(p);
-      p.finally(() => {
-        const idx = running.indexOf(p);
-        if (idx >= 0) running.splice(idx, 1);
-      });
-    }
-    if (running.length > 0) {
-      await Promise.race(running);
-    }
-  }
+export async function executeDispatch(task: DispatchTask): Promise<void> {
+  const instances = task.resolvedInstances
+  const files = task.resolvedFiles
+  const bucket = task.request.bucket
+  // ...信号量并发控制...
+  // processInstance(task.id, instance, files, bucket, task.request.instanceBuckets, task.request.prefix)
 }
 
 async function processInstance(
+  taskId: string,
   instance: MinioInstance,
-  files: { name: string; content: string }[],
-  bucket: string | undefined,
-  onProgress: (r: DispatchResult) => void,
+  files: StoredFile[],
+  bucketOverride: string | undefined,
+  instanceBuckets?: Record<string, string>,
+  prefix?: string,
 ) {
-  const targetBucket = bucket || instance.bucket;
-  if (!targetBucket) {
-    onProgress({ ..., status: 'failed', error: 'No bucket specified' });
-    return;
-  }
-  for (const file of files) {
+  const targetBucket = instanceBuckets?.[instance.id] || bucketOverride
+  for (const f of files) {
+    const objectKey = prefix ? `${prefix.replace(/\/+$/, '')}/${f.objectKey}` : f.objectKey
+    const localPath = resolve(UPLOAD_DIR, f.storedPath)
     try {
-      await uploadJson(instance, targetBucket, file.name, file.content);
-      onProgress({ ..., status: 'success' });
+      await uploadObject(instance, targetBucket, objectKey, localPath, f.contentType)
+      // 推送 success
     } catch (e) {
-      onProgress({ ..., status: 'failed', error: e.message });
+      // 推送 failed
     }
   }
 }
@@ -569,37 +600,45 @@ const navItems = [
   - 候选项 = 选中实例的 bucket 去重
   - watch 选中实例变化 → 更新候选
 - **执行**: `NuxtButton` → `POST /api/dispatch`
-- **进度展示**: `NuxtTable` 矩阵 + `NuxtProgress`
+- **进度展示**: 实例级聚合折叠视图 + `NuxtProgress`
   - `EventSource('/api/dispatch/events?taskId=...')` 监听 SSE
   - 每收到 progress 事件，更新对应单元格状态
-- **重试**: 失败行 `NuxtButton` → 重新提交该实例的分发
+- **重试**: 失败实例 `NuxtButton` → 重新提交该实例的分发（复用暂存 fileId）
 
 ### 5.3 前端 Composable
 
 ```ts
 // app/composables/useDispatch.ts
 export function useDispatch() {
-  const files = ref<{ name: string; content: string }[]>([]);
-  const selectedGroupIds = ref<string[]>([]);
-  const selectedInstanceIds = ref<string[]>([]);
-  const bucket = ref<string>('');
-  const results = ref<DispatchResult[]>([]);
+  const files = ref<StoredFile[]>([]);
+  const prefix = ref('');
+  const uploadStates = ref<Record<string, 'uploading' | 'ready' | 'error'>>({});
+  const selectedInstanceIds = ref<Set<string>>(new Set());
+  const instanceBuckets = ref<Record<string, string>>({});
+  const progress = ref<Record<string, CellStatus>>({});
   const isRunning = ref(false);
 
-  // bucket 候选项（选中实例的 bucket 去重）
-  const bucketOptions = computed(() => { ... });
+  // 异步上传文件到暂存
+  async function addFiles(fileList: FileList) { ... }
+  async function addFolder(fileList: FileList) { ... }
+  async function removeUpload(id: string) { ... }
+
+  // 实例级聚合进度
+  function getInstanceProgress(instanceId: string) { ... }
 
   // 提交分发
-  async function submit() {
-    const { taskId } = await $fetch('/api/dispatch', { method: 'POST', body: { ... } });
-    isRunning.value = true;
+  async function submit(groups: InstanceGroup[]) {
+    const { taskId } = await $fetch('/api/dispatch', {
+      method: 'POST',
+      body: { files: files.value.map(f => ({ id: f.id, objectKey: f.objectKey })), ..., prefix: prefix.value }
+    });
     // 建立 SSE 连接
     const es = new EventSource(`/api/dispatch/events?taskId=${taskId}`);
     es.addEventListener('progress', (e) => { ... });
     es.addEventListener('complete', () => { isRunning.value = false; es.close(); });
   }
 
-  return { files, selectedGroupIds, selectedInstanceIds, bucket, bucketOptions, results, isRunning, submit };
+  return { files, prefix, uploadStates, selectedInstanceIds, instanceBuckets, progress, isRunning, addFiles, addFolder, removeUpload, getInstanceProgress, submit, ... };
 }
 ```
 
@@ -609,11 +648,9 @@ export function useDispatch() {
 
 ### 6.1 Content-Type 修复
 
-**问题**: Bun `S3Client.write(string)` 会把 `application/json` 改写为 `application/json;charset=utf-8`，MinIO Console 预览不识别。
+**问题**: SDK 的 `write(string)` 会把 `application/json` 改写为 `application/json;charset=utf-8`，MinIO Console 预览不识别。
 
-**解决**: 用预签名 PUT URL + 原生 `fetch` 上传，手动指定 `Content-Type: application/json`。
-
-已在 `minio-operation` 项目中验证通过，封装在 `uploadJson()` 中。
+**解决**: 纯手写 SigV4 预签名 PUT URL + 原生 `fetch` 上传，手动指定 `Content-Type`。已封装在 `uploadSmall()` / `uploadObject()` 中。
 
 ### 6.2 并发控制
 

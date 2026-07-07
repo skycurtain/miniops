@@ -2,8 +2,10 @@ import type {
   DispatchResult,
   DispatchTask,
   MinioInstance,
+  StoredFile,
 } from '../types'
-import { uploadJson } from './minio'
+import { uploadObject } from './minio'
+import { resolve } from 'node:path'
 
 /**
  * 分发执行器
@@ -87,7 +89,7 @@ export async function executeDispatch(task: DispatchTask): Promise<void> {
   notify(task.id, { type: 'start', taskId: task.id })
 
   const instances = task.resolvedInstances
-  const files = task.request.files
+  const files = task.resolvedFiles
   const bucket = task.request.bucket
 
   // 信号量并发控制
@@ -97,7 +99,7 @@ export async function executeDispatch(task: DispatchTask): Promise<void> {
   while (queue.length > 0 || running.length > 0) {
     while (running.length < CONCURRENCY && queue.length > 0) {
       const instance = queue.shift()!
-      const p = processInstance(task.id, instance, files, bucket, task.request.instanceBuckets)
+      const p = processInstance(task.id, instance, files, bucket, task.request.instanceBuckets, task.request.prefix)
       running.push(p)
       p.finally(() => {
         const idx = running.indexOf(p)
@@ -123,24 +125,29 @@ export async function executeDispatch(task: DispatchTask): Promise<void> {
   setTimeout(() => taskRegistry.delete(task.id), 60_000)
 }
 
-/** 处理单个实例：遍历文件，逐个上传 */
+/** 处理单个实例：遍历文件，逐个从磁盘上传 */
 async function processInstance(
   taskId: string,
   instance: MinioInstance,
-  files: { name: string; content: string }[],
+  files: StoredFile[],
   bucketOverride: string | undefined,
   instanceBuckets?: Record<string, string>,
+  prefix?: string,
 ): Promise<void> {
   // 优先级：instanceBuckets[instanceId] > bucketOverride
   const targetBucket = instanceBuckets?.[instance.id] || bucketOverride
   const task = taskRegistry.get(taskId)!.task
 
-  for (const file of files) {
+  // 暂存目录根（UPLOAD_DIR）
+  const UPLOAD_DIR = process.env.UPLOAD_DIR
+    ?? resolve(process.cwd(), 'server/data/uploads')
+
+  for (const f of files) {
     const result: DispatchResult = {
       groupId: instance.groupId,
       instanceId: instance.id,
       instanceName: instance.name,
-      fileName: file.name,
+      fileName: f.objectKey,
       status: 'success',
     }
 
@@ -153,9 +160,14 @@ async function processInstance(
       continue
     }
 
+    const objectKey = prefix
+      ? `${prefix.replace(/\/+$/, '')}/${f.objectKey}`
+      : f.objectKey
+    const localPath = resolve(UPLOAD_DIR, f.storedPath)
+
     const start = Date.now()
     try {
-      await uploadJson(instance, targetBucket, file.name, file.content)
+      await uploadObject(instance, targetBucket, objectKey, localPath, f.contentType)
       result.duration = Date.now() - start
       task.results.push(result)
       notify(taskId, { type: 'progress', taskId, result })

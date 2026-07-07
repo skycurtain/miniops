@@ -1,6 +1,8 @@
 import { getGroups } from '../../utils/store'
 import { registerTask, executeDispatch } from '../../utils/dispatcher'
-import type { DispatchRequest, DispatchTask, MinioInstance } from '../../types'
+import { getStoredFile } from '../../utils/uploads'
+import { sanitizeObjectKey } from '../../utils/minio'
+import type { DispatchRequest, DispatchTask, MinioInstance, StoredFile } from '../../types'
 
 /**
  * POST /api/dispatch
@@ -46,12 +48,24 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '选中的目标没有启用的实例' })
   }
 
+  // 解析 fileId → StoredFile
+  const resolvedFiles: StoredFile[] = []
+  for (const f of body.files) {
+    const stored = getStoredFile(f.id)
+    if (!stored) {
+      throw createError({ statusCode: 400, statusMessage: `文件 ${f.id} 不存在或已过期` })
+    }
+    // 允许请求体覆盖 objectKey（例如前端调整目标路径）
+    resolvedFiles.push(f.objectKey ? { ...stored, objectKey: sanitizeObjectKey(f.objectKey) } : stored)
+  }
+
   // 创建任务
   const task: DispatchTask = {
     id: `task-${crypto.randomUUID()}`,
     request: body,
     status: 'pending',
     resolvedInstances: Array.from(resolvedMap.values()),
+    resolvedFiles,
     results: [],
     createdAt: new Date().toISOString(),
   }

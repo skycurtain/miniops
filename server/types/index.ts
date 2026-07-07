@@ -61,18 +61,38 @@ export interface ImportResult {
 
 // ---------- 分发相关类型 ----------
 
+/** 暂存的上传文件 */
+export interface StoredFile {
+  /** 文件 ID */
+  id: string
+  /** 原始文件名，如 "config.json" */
+  name: string
+  /** 分发到 MinIO 时的对象 key。单文件 = 文件名；文件夹内文件 = 相对路径，如 "sub/a.json" */
+  objectKey: string
+  /** 文件大小（字节） */
+  size: number
+  /** 推断的 MIME 类型 */
+  contentType: string
+  /** 磁盘相对路径（相对 UPLOAD_DIR），如 "uf-xxx/config.json" */
+  storedPath: string
+  /** 上传完成时间（ISO 字符串） */
+  uploadedAt: string
+}
+
 /** 分发任务请求 */
 export interface DispatchRequest {
-  /** 要分发的文件列表（文件名 + 内容） */
-  files: { name: string; content: string }[]
+  /** 要分发的文件列表（引用暂存文件的 id，可选覆盖 objectKey） */
+  files: { id: string; objectKey?: string }[]
   /** 选中的实例组 ID（展开为组内所有 enabled 实例） */
   groupIds: string[]
   /** 单独勾选的实例 ID（与 groupIds 合并去重） */
   instanceIds: string[]
-  /** 分发目标 bucket，全局覆盖（向后兼容） */
+  /** 分发目标 bucket，全局覆盖 */
   bucket?: string
   /** 按实例指定 bucket，优先级高于 bucket */
   instanceBuckets?: Record<string, string>
+  /** 可选目标前缀，分发到 bucket/prefix/ 下 */
+  prefix?: string
 }
 
 /** 单个文件分发结果 */
@@ -94,6 +114,8 @@ export interface DispatchTask {
   status: 'pending' | 'running' | 'done'
   /** 展开后的目标实例列表（去重后） */
   resolvedInstances: MinioInstance[]
+  /** 展开后的文件列表（从 request.files 的 id 解析出的 StoredFile） */
+  resolvedFiles: StoredFile[]
   results: DispatchResult[]
   createdAt: string
   finishedAt?: string

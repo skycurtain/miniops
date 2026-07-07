@@ -63,6 +63,11 @@ PORT=8080 bun run .output/server/index.mjs
 | `PORT` | `3000` | 服务监听端口 |
 | `DISPATCH_CONCURRENCY` | `5` | 文件分发并发数 |
 | `DATA_FILE_PATH` | `server/data/groups.json` | 实例组数据文件路径 |
+| `UPLOAD_DIR` | `server/data/uploads` | 文件分发暂存目录 |
+| `MAX_UPLOAD_SIZE` | `0` | 单文件最大字节数，0 表示不限 |
+| `MULTIPART_THRESHOLD` | `8388608`（8MB） | 超过此大小走 multipart 上传 |
+| `MULTIPART_PART_SIZE` | `5242880`（5MB） | 分片大小（S3 最小 5MB） |
+| `UPLOAD_TTL_HOURS` | `24` | 孤儿暂存文件清理时长（小时） |
 
 ## 七、数据存储
 
@@ -83,6 +88,7 @@ server {
         proxy_pass http://127.0.0.1:3000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        client_max_body_size 0;  # 大文件上传不限制请求体大小
     }
 
     # SSE 端点：关闭缓冲和超时
@@ -109,6 +115,6 @@ server {
 1. 访问首页，确认总览页正常加载
 2. 进入"实例"页，创建一个实例组并添加实例
 3. 测试连通性，确认在线状态
-4. 进入"文件分发"页，选择文件和目标，执行分发
-5. 确认进度矩阵实时更新，上传成功
-6. 登录 MinIO Console，确认文件可预览（Content-Type 为 application/json）
+4. 进入"文件分发"页，选择文件/文件夹和目标，执行分发
+5. 确认进度聚合视图实时更新，上传成功
+6. 登录 MinIO Console，确认文件路径和 Content-Type 正确

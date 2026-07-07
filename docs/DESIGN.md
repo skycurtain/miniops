@@ -22,7 +22,7 @@
 | UI 组件库 | Nuxt UI v4 | 125+ 组件全免费（MIT），含 Table / FileUpload / Progress |
 | 运行时 | Bun | 包管理 + 开发/生产运行时 |
 | 样式 | Tailwind CSS v4 | 随 Nuxt UI v4 内置 |
-| MinIO 操作 | Bun 内置 `S3Client` | S3 兼容协议，已验证可用 |
+| MinIO 操作 | 手写 SigV4 | 纯 `node:crypto` + 原生 `fetch`，零 SDK 依赖 |
 
 ### 关键技术决策
 
@@ -30,7 +30,8 @@
 - **代理模式**：浏览器 → 控制中心后端 → 各 MinIO 实例。密钥不进浏览器，浏览器无需直连内网实例。
 - **部署形态**：Nuxt 全栈（非单 exe）。控制中心常驻服务器，用 Bun 运行 Nitro 产物。
 - **组件前缀**：`prefix: 'Nuxt'`，所有 Nuxt UI 组件使用 `Nuxt` 前缀（如 `NuxtButton`、`NuxtTable`）。
-- **Content-Type 修复**：上传 JSON 时用预签名 PUT URL 手动指定 `Content-Type: application/json`，绕开 Bun `S3Client.write()` 自动追加 `;charset=utf-8` 导致 MinIO Console 无法预览的问题。
+- **Content-Type 修复**：上传时用预签名 PUT URL 手动指定 `Content-Type`，绕开 SDK 自动追加 `;charset=utf-8` 导致 MinIO Console 无法预览的问题。
+- **V2 分发能力**：支持任意类型文件、整个文件夹、大文件（GB 级，手写 S3 Multipart Upload）。文件先暂存控制中心磁盘，再逐实例分发。
 
 ---
 
@@ -60,10 +61,11 @@ interface MinioInstance {
   endpoint: string        // http://10.24.0.10:9000
   accessKey: string
   secretKey: string
-  bucket?: string         // 该实例最常用的默认 bucket，如 ndm；分发时可覆盖
   enabled: boolean        // 是否启用
 }
 ```
+
+> **已知技术债**：早期设计中 `MinioInstance` 有 `bucket` 字段，但已废弃。分发时通过 `instanceBuckets` 按实例指定 bucket，bucket 候选实时从 MinIO `ListBuckets` API 拉取。
 
 > **关于一个实例属于多个组**：不支持。实例只属于一个组。若需跨组复用，通过"导出再导入"或"组内复制实例"实现。
 
@@ -72,22 +74,44 @@ interface MinioInstance {
 一次"批量上传"操作。目标支持选组（全选组内实例）和选单个实例，可跨组多选。
 
 ```ts
+interface StoredFile {
+  id: string
+  name: string
+  objectKey: string       // 分发到 MinIO 时的对象 key
+  size: number
+  contentType: string
+  storedPath: string      // 磁盘相对路径
+  uploadedAt: string
+}
+
 interface DispatchResult {
   groupId: string
   instanceId: string
+  instanceName: string
   fileName: string
   status: 'success' | 'failed'
   error?: string
+  duration?: number
 }
 
 interface DispatchTask {
   id: string
-  files: { name: string; content: string }[]
-  groupIds: string[]      // 选中的实例组（展开为组内所有启用的实例）
-  instanceIds: string[]   // 单独勾选的实例（与 groupIds 合并去重）
-  bucket?: string         // 分发目标 bucket，覆盖实例默认值；两者皆空则报错
+  request: DispatchRequest
   status: 'pending' | 'running' | 'done'
+  resolvedInstances: MinioInstance[]
+  resolvedFiles: StoredFile[]
   results: DispatchResult[]
+  createdAt: string
+  finishedAt?: string
+}
+
+interface DispatchRequest {
+  files: { id: string; objectKey?: string }[]  // 引用暂存文件的 id
+  groupIds: string[]
+  instanceIds: string[]
+  bucket?: string
+  instanceBuckets?: Record<string, string>   // 按实例指定 bucket
+  prefix?: string            // 可选目标前缀
 }
 ```
 
@@ -103,10 +127,11 @@ interface DispatchTask {
 | 实例组管理 | 组内实例管理 | 在组内新增/编辑/删除/复制实例 |
 | 实例组管理 | 连通性测试 | 对单个/组内全部实例做 ping |
 | 实例组管理 | 导入/导出 | 通过 JSON 文件批量导入组配置；导出当前配置 |
-| 文件分发 | 选择文件 | 本地选 JSON 文件（可多选），上传到控制中心后端 |
+| 文件分发 | 选择文件 | 本地选任意类型文件或文件夹（可多选），异步上传到控制中心暂存 |
 | 文件分发 | 选择目标 | 多选实例组（可跨组多选） |
-| 文件分发 | 批量上传 | 后端代理，展开组为实例，遍历上传 |
-| 文件分发 | 实时进度 | 实例 × 文件 的进度矩阵，SSE 推送 |
+| 文件分发 | 批量上传 | 后端代理，展开组为实例，逐实例从磁盘文件分发（小文件单次 PUT / 大文件 multipart） |
+| 文件分发 | 实时进度 | 实例级聚合折叠视图，SSE 推送 |
+| 文件分发 | 目标前缀 | 可选，分发到 bucket/prefix/ 下 |
 | 结果汇总 | 成功/失败统计 | 失败可单独重试 |
 
 ### 导入/导出设计
@@ -196,18 +221,17 @@ app/pages/
 
 #### 3. 文件分发 `/ops/dispatch`（核心页，位于"运维"一级菜单下）
 
-- 顶部：`NuxtFileUpload` 选文件区（支持多文件、拖拽）
+- 顶部："添加文件" + "添加文件夹" 两个按钮（不限文件类型）
+- 文件列表：MIME 图标 + 文件名 + 大小 + 上传状态（上传中/就绪/失败）
 - 中部：分组 Table（`NuxtTable` 可展开行）
   - 组行：组名、实例数、在线数，带 checkbox（勾选=全选组内实例）
   - 实例行：名称、endpoint、bucket、状态，带 checkbox（精确勾选）
   - 父子 checkbox 联动
-- bucket 选择器（表头/表格上方）：`NuxtSelect` 下拉框
-  - 候选项随选中实例动态更新：收集选中实例的 bucket 去重
-  - 只有一个值 → 自动预填；多个值 → 列出供选择；为空 → 手动输入
-  - 任务级参数，一次性覆盖所有选中实例
+- bucket 选择器：实例级下拉（候选实时从 MinIO ListBuckets 拉取）+ 组级批量设 bucket（交集候选）
+- 目标前缀输入框（可选）：分发到 `bucket/prefix/` 下
 - 底部：`NuxtButton` 开始分发
-- 执行后：进度矩阵 `NuxtTable`（行=实例，列=文件，单元格=成功/失败/进行中），SSE 实时更新
-- 失败行支持"重试"
+- 执行后：实例级聚合进度视图（完成数/总数 + 进度条 + 失败计数，可展开看单文件明细），SSE 实时更新
+- 失败实例支持"重试"
 
 ---
 
@@ -222,18 +246,24 @@ app/pages/
 | POST | `/api/groups/:id/test` | 批量测试组内实例连通性 |
 | POST | `/api/groups/import` | 导入实例组（JSON） |
 | GET | `/api/groups/export` | 导出实例组（JSON） |
-| POST | `/api/dispatch` | 提交分发任务（文件 + groupIds + instanceIds + bucket） |
+| POST | `/api/dispatch` | 提交分发任务（fileIds + groupIds + instanceIds + bucket/prefix） |
 | GET | `/api/dispatch/events` | SSE 流，实时推送分发进度 |
+| POST | `/api/uploads` | multipart 上传单个文件到暂存，返回 StoredFile |
+| DELETE | `/api/uploads/:id` | 删除暂存文件 |
 
 ### 分发执行流程
 
 ```
-前端 POST /api/dispatch（files + groupIds + instanceIds + bucket）
+前端逐文件 POST /api/uploads（multipart）→ 控制中心暂存磁盘 → 返回 fileId
+前端 POST /api/dispatch（fileIds + groupIds + instanceIds + bucket + prefix）
   → 后端展开 groupIds 为实例列表，与 instanceIds 合并去重（仅 enabled 实例）
+  → 解析 fileId → StoredFile（从内存 Map 查）
   → 创建任务，返回 taskId
   → 后台并发执行（实例维度并发，默认 5）
-    → 每个实例：遍历文件，用预签名 PUT 上传到该实例 MinIO
-    → 每个文件上传完，通过 SSE 推送 {groupId, instanceId, fileName, status}
+    → 每个实例：遍历文件，从磁盘读取调 uploadObject 上传
+      → 小文件（<8MB）：单次预签名 PUT
+      → 大文件（≥8MB）：手写 S3 Multipart Upload（Initiate → UploadPart ×N → Complete）
+    → 每个文件上传完，通过 SSE 推送 {instanceId, fileName, status}
   → 全部完成后推送任务完成事件
 ```
 
@@ -278,23 +308,26 @@ miniops/
 ├── server/
 │   ├── api/
 │   │   ├── groups/
-│   │   │   ├── index.get.ts       # GET /api/groups
-│   │   │   ├── index.post.ts      # POST /api/groups
-│   │   │   ├── [id].put.ts        # PUT /api/groups/:id
-│   │   │   ├── [id].delete.ts     # DELETE /api/groups/:id
-│   │   │   ├── [id]/test.post.ts  # POST /api/groups/:id/test
-│   │   │   ├── import.post.ts     # POST /api/groups/import
-│   │   │   └── export.get.ts      # GET /api/groups/export
-│   │   └── dispatch/
-│   │       ├── index.post.ts      # POST /api/dispatch
-│   │       └── events.get.ts      # GET /api/dispatch/events (SSE)
+│   │   ├── dispatch/
+│   │   │   ├── index.post.ts      # POST /api/dispatch
+│   │   │   └── events.get.ts      # SSE
+│   │   ├── instances/
+│   │   │   └── buckets.post.ts    # POST /api/instances/buckets
+│   │   └── uploads/
+│   │       ├── index.post.ts      # POST /api/uploads
+│   │       └── [id].delete.ts     # DELETE /api/uploads/:id
 │   ├── data/
-│   │   └── groups.json            # 实例组清单数据（含嵌套实例）
+│   │   ├── groups.json
+│   │   └── uploads/               # 暂存目录（gitignore）
+│   ├── plugins/
+│   │   └── cleanup.ts             # 孤儿暂存定时清理
 │   ├── types/
-│   │   └── index.ts               # 后端类型定义
+│   │   └── index.ts
 │   └── utils/
-│       ├── minio.ts               # MinIO 操作封装
-│       └── store.ts               # 数据读写
+│       ├── minio.ts               # MinIO 操作（SigV4 签名 + uploadObject + multipart）
+│       ├── store.ts               # 实例组数据读写
+│       ├── uploads.ts             # 暂存文件管理
+│       └── dispatcher.ts          # 分发执行器
 ├── nuxt.config.ts
 ├── package.json
 └── tsconfig.json

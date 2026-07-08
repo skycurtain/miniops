@@ -33,6 +33,74 @@ function fileIcon(ct: string): string {
 const uploadingCount = computed(() => Object.values(dispatch.uploadStates.value).filter(v => v === 'uploading').length)
 const readyCount = computed(() => dispatch.files.value.filter(f => dispatch.getUploadStatus(f.id) === 'ready').length)
 
+// ---------- 文件列表分组：单文件 vs 文件夹聚合 ----------
+interface FileGroup {
+  type: 'file' | 'folder'
+  /** 文件夹名（仅 folder 类型） */
+  folderName?: string
+  /** 该组包含的文件 */
+  items: { id: string; name: string; objectKey: string; size: number; contentType: string; storedPath: string; uploadedAt: string }[]
+  /** 总大小 */
+  totalSize: number
+  /** 是否全部就绪 */
+  allReady: boolean
+  /** 是否有上传中 */
+  anyUploading: boolean
+  /** 是否有错误 */
+  anyError: boolean
+}
+
+const folderExpanded = ref<Record<string, boolean>>({})
+
+const fileGroups = computed<FileGroup[]>(() => {
+  const files = dispatch.files.value
+  const folderMap = new Map<string, typeof files>()
+  const singleFiles: typeof files = []
+
+  for (const f of files) {
+    const slashIdx = f.objectKey.indexOf('/')
+    if (slashIdx > 0) {
+      const folder = f.objectKey.slice(0, slashIdx)
+      if (!folderMap.has(folder)) folderMap.set(folder, [])
+      folderMap.get(folder)!.push(f)
+    }
+    else {
+      singleFiles.push(f)
+    }
+  }
+
+  const groups: FileGroup[] = []
+
+  // 单文件
+  for (const f of singleFiles) {
+    const status = dispatch.getUploadStatus(f.id)
+    groups.push({
+      type: 'file',
+      items: [f],
+      totalSize: f.size,
+      allReady: status === 'ready',
+      anyUploading: status === 'uploading',
+      anyError: status === 'error',
+    })
+  }
+
+  // 文件夹
+  for (const [folderName, items] of folderMap) {
+    const statuses = items.map(f => dispatch.getUploadStatus(f.id))
+    groups.push({
+      type: 'folder',
+      folderName,
+      items,
+      totalSize: items.reduce((sum, f) => sum + f.size, 0),
+      allReady: statuses.every(s => s === 'ready'),
+      anyUploading: statuses.some(s => s === 'uploading'),
+      anyError: statuses.some(s => s === 'error'),
+    })
+  }
+
+  return groups
+})
+
 const expanded = ref<Record<string, boolean>>({})
 function isInstanceSelected(inst: MinioInstance) { return dispatch.selectedInstanceIds.value.has(inst.id) }
 function toggleInstance(inst: MinioInstance) {
@@ -127,17 +195,51 @@ async function retryInstance(instanceId: string) {
         </div>
       </div>
       <div v-if="dispatch.files.value.length || uploadingCount > 0" class="flex flex-col gap-1.5">
-        <div v-for="f in dispatch.files.value" :key="f.id" class="flex items-center gap-2 rounded-md border border-default bg-elevated px-3 py-1.5 text-sm">
-          <NuxtIcon :name="fileIcon(f.contentType)" class="size-4 shrink-0 text-primary" />
-          <span class="font-mono truncate flex-1">{{ f.objectKey }}</span>
-          <span class="text-muted text-xs shrink-0">{{ formatSize(f.size) }}</span>
-          <NuxtIcon v-if="dispatch.getUploadStatus(f.id) === 'uploading'" name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
-          <NuxtIcon v-else-if="dispatch.getUploadStatus(f.id) === 'error'" name="i-lucide-x-circle" class="size-4 text-error shrink-0" />
-          <NuxtIcon v-else name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
-          <button v-if="!dispatch.isRunning.value" class="text-muted hover:text-error shrink-0" @click="dispatch.removeUpload(f.id)">
-            <NuxtIcon name="i-lucide-x" class="size-3.5" />
-          </button>
-        </div>
+        <!-- 分组展示：单文件逐个 + 文件夹聚合 -->
+        <template v-for="(group, gi) in fileGroups" :key="gi">
+          <!-- 文件夹聚合条目 -->
+          <div v-if="group.type === 'folder'" class="rounded-md border border-default bg-elevated">
+            <div class="flex items-center gap-2 px-3 py-1.5 text-sm">
+              <button class="shrink-0" @click="folderExpanded[group.folderName!] = !folderExpanded[group.folderName!]">
+                <NuxtIcon :name="folderExpanded[group.folderName!] ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="size-4 text-muted" />
+              </button>
+              <NuxtIcon name="i-lucide-folder" class="size-4 shrink-0 text-primary" />
+              <span class="font-mono truncate flex-1">{{ group.folderName }}/</span>
+              <span class="text-muted text-xs shrink-0">{{ group.items.length }} 个文件</span>
+              <span class="text-muted text-xs shrink-0">{{ formatSize(group.totalSize) }}</span>
+              <NuxtIcon v-if="group.anyUploading" name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
+              <NuxtIcon v-else-if="group.anyError" name="i-lucide-x-circle" class="size-4 text-error shrink-0" />
+              <NuxtIcon v-else name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
+              <button v-if="!dispatch.isRunning.value" class="text-muted hover:text-error shrink-0" @click="dispatch.removeUploads(group.items.map(f => f.id))">
+                <NuxtIcon name="i-lucide-x" class="size-3.5" />
+              </button>
+            </div>
+            <!-- 展开后单文件明细 -->
+            <div v-if="folderExpanded[group.folderName!]" class="border-t border-default flex flex-col gap-0.5 px-3 py-1">
+              <div v-for="f in group.items" :key="f.id" class="flex items-center gap-2 py-0.5 text-sm pl-6">
+                <NuxtIcon :name="fileIcon(f.contentType)" class="size-3.5 shrink-0 text-muted" />
+                <span class="font-mono truncate flex-1 text-xs text-muted">{{ f.objectKey }}</span>
+                <span class="text-muted text-xs shrink-0">{{ formatSize(f.size) }}</span>
+                <NuxtIcon v-if="dispatch.getUploadStatus(f.id) === 'uploading'" name="i-lucide-loader-circle" class="size-3.5 animate-spin text-primary shrink-0" />
+                <NuxtIcon v-else-if="dispatch.getUploadStatus(f.id) === 'error'" name="i-lucide-x-circle" class="size-3.5 text-error shrink-0" />
+                <NuxtIcon v-else name="i-lucide-check-circle" class="size-3.5 text-success shrink-0" />
+              </div>
+            </div>
+          </div>
+          <!-- 单文件条目 -->
+          <div v-else class="flex items-center gap-2 rounded-md border border-default bg-elevated px-3 py-1.5 text-sm">
+            <NuxtIcon :name="fileIcon(group.items[0].contentType)" class="size-4 shrink-0 text-primary" />
+            <span class="font-mono truncate flex-1">{{ group.items[0].objectKey }}</span>
+            <span class="text-muted text-xs shrink-0">{{ formatSize(group.items[0].size) }}</span>
+            <NuxtIcon v-if="group.anyUploading" name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
+            <NuxtIcon v-else-if="group.anyError" name="i-lucide-x-circle" class="size-4 text-error shrink-0" />
+            <NuxtIcon v-else name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
+            <button v-if="!dispatch.isRunning.value" class="text-muted hover:text-error shrink-0" @click="dispatch.removeUpload(group.items[0].id)">
+              <NuxtIcon name="i-lucide-x" class="size-3.5" />
+            </button>
+          </div>
+        </template>
+        <!-- 上传中临时项 -->
         <div v-for="(state, key) in dispatch.uploadStates.value" v-show="state === 'uploading'" :key="key" class="flex items-center gap-2 rounded-md border border-default bg-elevated px-3 py-1.5 text-sm opacity-70">
           <NuxtIcon name="i-lucide-file" class="size-4 shrink-0 text-muted" />
           <span class="font-mono truncate flex-1">{{ key.replace(/^temp-/, '').replace(/-\d+$/, '') }}</span>

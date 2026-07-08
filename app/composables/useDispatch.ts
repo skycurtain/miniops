@@ -151,6 +151,19 @@ export function useDispatch() {
     delete uploadStates.value[id]
   }
 
+  /** 批量移除已上传的文件（文件夹整体移除时调用） */
+  async function removeUploads(ids: string[]) {
+    for (const id of ids) {
+      try {
+        await $fetch(`/api/uploads/${id}`, { method: 'DELETE' })
+      }
+      catch { /* 容错 */ }
+      delete uploadStates.value[id]
+    }
+    const idSet = new Set(ids)
+    files.value = files.value.filter(f => !idSet.has(f.id))
+  }
+
   /** 获取文件的上传状态 */
   function getUploadStatus(id: string): UploadStatus | undefined {
     return uploadStates.value[id]
@@ -436,6 +449,7 @@ export function useDispatch() {
     addFiles,
     addFolder,
     removeUpload,
+    removeUploads,
     getUploadStatus,
     getCell,
     getSelectedInstances,

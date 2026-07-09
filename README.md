@@ -1,75 +1,103 @@
-# Nuxt Minimal Starter
+# miniops
 
-Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+面向 MinIO 的批量运维操作平台。实施人员在控制中心通过 Web 界面，将文件/文件夹批量分发到一组 MinIO 实例。
 
-## Setup
+## 功能概览
 
-Make sure to install dependencies:
+- **实例组管理**：创建/编辑/删除实例组，组内管理 MinIO 实例（增删改查、复制、启用/禁用）
+- **连通性测试**：对单个或组内全部 MinIO 实例做健康检查
+- **导入/导出**：通过 JSON 文件批量导入实例组配置，或导出当前配置
+- **文件分发**（核心功能）：
+  - 支持任意类型文件、整个文件夹、大文件（GB 级）
+  - 文件先暂存控制中心磁盘，再逐实例分发
+  - 小文件单次 PUT，大文件手写 S3 Multipart Upload
+  - 实时 SSE 进度推送，实例级聚合折叠视图
+  - 可选目标前缀（分发到 `bucket/prefix/` 下）
+  - 失败实例支持单独重试
+
+## 技术栈
+
+| 层 | 技术 |
+|---|---|
+| 框架 | Nuxt 4 + Vue 3（全栈模式） |
+| UI | Nuxt UI v4 + Tailwind CSS v4（组件统一 `Nuxt` 前缀） |
+| 运行时 | Bun（推荐）/ Node.js 18+ |
+| 校验 | valibot |
+| MinIO 操作 | 手写 AWS SigV4（`node:crypto` + 原生 `fetch`，零 SDK 依赖） |
+
+## 快速开始
 
 ```bash
-# npm
-npm install
-
-# pnpm
-pnpm install
-
-# yarn
-yarn install
-
-# bun
+# 安装依赖
 bun install
-```
 
-## Development Server
-
-Start the development server on `http://localhost:3000`:
-
-```bash
-# npm
-npm run dev
-
-# pnpm
-pnpm dev
-
-# yarn
-yarn dev
-
-# bun
+# 开发模式（默认 http://localhost:3000）
 bun run dev
-```
 
-## Production
-
-Build the application for production:
-
-```bash
-# npm
-npm run build
-
-# pnpm
-pnpm build
-
-# yarn
-yarn build
-
-# bun
+# 生产构建
 bun run build
+
+# 生产启动
+bun run .output/server/index.mjs
 ```
 
-Locally preview production build:
+## 环境变量
 
-```bash
-# npm
-npm run preview
+| 变量 | 默认值 | 说明 |
+|---|---|---|
+| `PORT` | `3000` | 服务监听端口 |
+| `DISPATCH_CONCURRENCY` | `5` | 文件分发并发数 |
+| `DATA_FILE_PATH` | `server/data/groups.json` | 实例组数据文件路径 |
+| `UPLOAD_DIR` | `server/data/uploads` | 文件分发暂存目录 |
+| `MAX_UPLOAD_SIZE` | `0` | 单文件最大字节数，0 表示不限 |
+| `MULTIPART_THRESHOLD` | `8388608`（8MB） | 超过此大小走 multipart 上传 |
+| `MULTIPART_PART_SIZE` | `5242880`（5MB） | 分片大小（S3 最小 5MB） |
+| `UPLOAD_TTL_HOURS` | `24` | 孤儿暂存文件清理时长（小时） |
 
-# pnpm
-pnpm preview
+## 项目结构
 
-# yarn
-yarn preview
-
-# bun
-bun run preview
+```
+miniops/
+├── app/                          # 前端
+│   ├── components/AppLayout.vue  # Dashboard 布局
+│   ├── composables/useDispatch.ts # 分发状态管理
+│   └── pages/
+│       ├── index.vue             # 总览
+│       ├── groups/index.vue      # 实例管理
+│       └── ops/dispatch/index.vue # 文件分发（核心页）
+├── server/                       # 后端（Nitro）
+│   ├── api/
+│   │   ├── groups/               # 实例组 CRUD + 导入导出 + 连通性测试
+│   │   ├── dispatch/             # 分发任务 + SSE 进度
+│   │   ├── instances/            # bucket 列表查询
+│   │   └── uploads/              # 文件暂存上传/删除
+│   ├── plugins/cleanup.ts        # 孤儿暂存定时清理
+│   ├── types/index.ts            # 类型定义
+│   ├── utils/
+│   │   ├── minio.ts              # SigV4 签名 + uploadObject + multipart
+│   │   ├── dispatcher.ts         # 分发执行器（并发 + SSE）
+│   │   ├── uploads.ts            # 暂存文件管理
+│   │   ├── store.ts              # 实例组数据读写（JSON 文件）
+│   │   └── validate.ts           # 校验工具
+│   └── data/groups.json          # 实例组数据
+├── docs/                         # 文档
+│   ├── DESIGN.md                 # 功能与设计文档
+│   ├── TECH.md                   # 技术实现文档
+│   ├── DEPLOY.md                 # 部署文档
+│   ├── DISPATCH-V2.md            # V2 分发能力技术方案
+│   └── DISPATCH-V2-PLAN.md       # V2 实施计划
+├── nuxt.config.ts
+└── package.json
 ```
 
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
+## 文档
+
+- [DESIGN.md](docs/DESIGN.md) - 功能与设计文档
+- [TECH.md](docs/TECH.md) - 技术实现文档
+- [DEPLOY.md](docs/DEPLOY.md) - 部署文档
+- [DISPATCH-V2.md](docs/DISPATCH-V2.md) - V2 分发能力技术方案
+- [DISPATCH-V2-PLAN.md](docs/DISPATCH-V2-PLAN.md) - V2 实施计划
+
+## 许可
+
+私有项目。

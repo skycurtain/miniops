@@ -79,24 +79,7 @@ miniops/
 │   │   ├── uploads.ts            # 暂存文件管理
 │   │   ├── store.ts              # 实例组数据读写（JSON 文件）
 │   │   └── validate.ts           # 校验工具
-│   └── data/groups.json          # 实例组数据
-├── docs/                         # 文档
-│   ├── DESIGN.md                 # 功能与设计文档
-│   ├── TECH.md                   # 技术实现文档
-│   ├── DEPLOY.md                 # 部署文档
-│   ├── DISPATCH-V2.md            # V2 分发能力技术方案
-│   └── DISPATCH-V2-PLAN.md       # V2 实施计划
-├── nuxt.config.ts
-└── package.json
-```
 
-## 文档
-
-- [DESIGN.md](docs/DESIGN.md) - 功能与设计文档
-- [TECH.md](docs/TECH.md) - 技术实现文档
-- [DEPLOY.md](docs/DEPLOY.md) - 部署文档
-- [DISPATCH-V2.md](docs/DISPATCH-V2.md) - V2 分发能力技术方案
-- [DISPATCH-V2-PLAN.md](docs/DISPATCH-V2-PLAN.md) - V2 实施计划
 
 ## 许可
 

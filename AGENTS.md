@@ -90,7 +90,7 @@ bun run .output/server/index.mjs  # 生产启动
 
 ## 环境变量
 
-见 [DEPLOY.md](docs/DEPLOY.md) 第六章。关键：`DISPATCH_CONCURRENCY`、`MULTIPART_THRESHOLD`、`MULTIPART_PART_SIZE`、`UPLOAD_TTL_HOURS`。
+关键：`DISPATCH_CONCURRENCY`、`MULTIPART_THRESHOLD`、`MULTIPART_PART_SIZE`、`UPLOAD_TTL_HOURS`。完整列表见 README.md 环境变量表。
 
 ## 注意事项
 

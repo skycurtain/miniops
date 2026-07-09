@@ -228,15 +228,17 @@ async function retryInstance(instanceId: string) {
           </div>
           <!-- 单文件条目 -->
           <div v-else class="flex items-center gap-2 rounded-md border border-default bg-elevated px-3 py-1.5 text-sm">
-            <NuxtIcon :name="fileIcon(group.items[0].contentType)" class="size-4 shrink-0 text-primary" />
-            <span class="font-mono truncate flex-1">{{ group.items[0].objectKey }}</span>
-            <span class="text-muted text-xs shrink-0">{{ formatSize(group.items[0].size) }}</span>
-            <NuxtIcon v-if="group.anyUploading" name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
-            <NuxtIcon v-else-if="group.anyError" name="i-lucide-x-circle" class="size-4 text-error shrink-0" />
-            <NuxtIcon v-else name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
-            <button v-if="!dispatch.isRunning.value" class="text-muted hover:text-error shrink-0" @click="dispatch.removeUpload(group.items[0].id)">
-              <NuxtIcon name="i-lucide-x" class="size-3.5" />
-            </button>
+            <template v-for="item in group.items" :key="item.id">
+              <NuxtIcon :name="fileIcon(item.contentType)" class="size-4 shrink-0 text-primary" />
+              <span class="font-mono truncate flex-1">{{ item.objectKey }}</span>
+              <span class="text-muted text-xs shrink-0">{{ formatSize(item.size) }}</span>
+              <NuxtIcon v-if="group.anyUploading" name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
+              <NuxtIcon v-else-if="group.anyError" name="i-lucide-x-circle" class="size-4 text-error shrink-0" />
+              <NuxtIcon v-else name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
+              <button v-if="!dispatch.isRunning.value" class="text-muted hover:text-error shrink-0" @click="dispatch.removeUpload(item.id)">
+                <NuxtIcon name="i-lucide-x" class="size-3.5" />
+              </button>
+            </template>
           </div>
         </template>
         <!-- 上传中临时项 -->
@@ -279,6 +281,9 @@ async function retryInstance(instanceId: string) {
               <div class="flex-1" />
               <div v-if="isInstanceSelected(inst) && inst.enabled" class="flex items-center gap-1">
                 <span class="text-xs text-muted">bucket</span>
+                <NuxtTooltip v-if="dispatch.getInstanceBucketOptions(inst).error" :text="dispatch.getInstanceBucketOptions(inst).error">
+                  <NuxtIcon name="i-lucide-triangle-alert" class="size-4 text-warning" />
+                </NuxtTooltip>
                 <NuxtIcon v-if="dispatch.getInstanceBucketOptions(inst).loading" name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
                 <NuxtInput v-else-if="dispatch.getInstanceBucketOptions(inst).error" :model-value="dispatch.getInstanceBucket(inst)" placeholder="输入 bucket" class="w-32" :disabled="dispatch.isRunning.value" @update:model-value="(val: string) => dispatch.setInstanceBucket(inst.id, val)" />
                 <NuxtSelectMenu v-else :model-value="dispatch.getInstanceBucket(inst)" :items="dispatch.getInstanceBucketOptions(inst).buckets.map(b => ({ label: b, value: b }))" value-key="value" placeholder="选择 bucket" class="w-32" :disabled="dispatch.isRunning.value" @update:model-value="(val: string) => dispatch.setInstanceBucket(inst.id, val)" />

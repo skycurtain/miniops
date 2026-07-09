@@ -319,6 +319,17 @@ export function useDispatch() {
       return
     }
 
+    // 凭据提醒：bucket 加载失败的实例可能凭据无效（不阻断，仅提醒）
+    const authFailed = selected.filter(inst => instanceBucketOptions.value[inst.id]?.error)
+    if (authFailed.length) {
+      const toast = useToast()
+      toast.add({
+        title: '部分实例凭据可能无效',
+        description: authFailed.map(i => i.name).join('、'),
+        color: 'warning',
+      })
+    }
+
     // 校验所有实例都有 bucket
     const noBucket = selected.filter(inst => !getInstanceBucket(inst))
     if (noBucket.length) {

@@ -17,13 +17,20 @@ export interface ConnectivityResult {
   online: boolean
   latency?: number // 毫秒
   error?: string
+  /** 凭据是否有效。仅 online=true 时有意义；undefined 表示未检测 */
+  authValid?: boolean
+  /** 凭据验证失败的错误信息 */
+  authError?: string
 }
 
 /**
  * 测试单个实例的连通性。
  *
- * 请求 endpoint 的 /minio/health/live 健康检查端点。
- * 该端点无需鉴权，仅验证 MinIO 进程是否存活、网络是否可达。
+ * 两步验证：
+ * ① GET /minio/health/live -- 无需鉴权，验证 MinIO 进程存活 + 网络可达
+ * ② listBuckets() -- 需鉴权，验证 accessKey/secretKey 是否正确
+ *
+ * health/live 通过后追加凭据验证，凭据无效时 authValid=false。
  */
 export async function testConnectivity(instance: MinioInstance): Promise<ConnectivityResult> {
   const base: ConnectivityResult = {
@@ -50,17 +57,38 @@ export async function testConnectivity(instance: MinioInstance): Promise<Connect
     const latency = Date.now() - start
 
     // /minio/health/live 返回 200 即健康；其他状态码也算"可达"（进程在响应）
-    if (res.status === 200) {
-      return { ...base, online: true, latency }
+    if (res.status !== 200) {
+      // 非 200 但有响应，说明进程活着，只是健康检查未通过
+      return { ...base, online: false, latency, error: `HTTP ${res.status}` }
     }
-    // 非 200 但有响应，说明进程活着，只是健康检查未通过
-    return { ...base, online: false, latency, error: `HTTP ${res.status}` }
+
+    // health/live 通过，追加凭据验证（listBuckets 需 SigV4 签名）
+    const result: ConnectivityResult = { ...base, online: true, latency }
+    const bucketResult = await listBuckets(instance)
+    if (bucketResult.error) {
+      result.authValid = false
+      result.authError = formatAuthError(bucketResult.error)
+    }
+    else {
+      result.authValid = true
+    }
+    return result
   }
   catch (e: any) {
     const latency = Date.now() - start
     const err = e?.name === 'AbortError' ? '请求超时（5s）' : (e?.cause?.code || e?.message || '连接失败')
     return { ...base, online: false, latency, error: err }
   }
+}
+
+/**
+ * 格式化凭据验证错误信息，提取关键信息便于用户理解。
+ */
+function formatAuthError(rawError: string): string {
+  if (rawError.includes('403')) return '凭据无效 (403 Access Denied)'
+  if (rawError.includes('401')) return '认证失败 (401 Unauthorized)'
+  if (rawError.includes('超时')) return '凭据验证超时'
+  return rawError
 }
 
 /**

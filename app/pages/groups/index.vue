@@ -7,6 +7,7 @@ import ConfirmDialog from '~/components/ConfirmDialog.vue'
 const NuxtBadgeC = resolveComponent('NuxtBadge')
 const NuxtButtonC = resolveComponent('NuxtButton')
 const NuxtIconC = resolveComponent('NuxtIcon')
+const NuxtTooltipC = resolveComponent('NuxtTooltip')
 
 interface MinioInstance {
   id: string
@@ -33,6 +34,10 @@ interface ConnectivityResult {
   online: boolean
   latency?: number
   error?: string
+  /** 凭据是否有效。仅 online=true 时有意义；undefined 表示未检测 */
+  authValid?: boolean
+  /** 凭据验证失败的错误信息 */
+  authError?: string
 }
 
 // ---------- 数据获取 ----------
@@ -83,6 +88,23 @@ async function testAll(g: InstanceGroup) {
   finally {
     testingGroup.value[g.id] = false
   }
+}
+
+/** 计算组内连通性聚合状态（测试全部后用于组标题 badge） */
+function getGroupConnectivitySummary(g: InstanceGroup): { label: string; color: string } | null {
+  const results = g.instances
+    .filter(i => i.enabled)
+    .map(i => connectivity.value[i.id])
+    .filter(Boolean)
+  if (!results.length) return null // 未测试过
+
+  const online = results.filter(r => r!.online).length
+  const offline = results.filter(r => !r!.online).length
+  const authFailed = results.filter(r => r!.online && r!.authValid === false).length
+
+  if (offline > 0) return { label: `${online}在线·${offline}离线`, color: 'error' }
+  if (authFailed > 0) return { label: `${online}在线·${authFailed}凭据异常`, color: 'warning' }
+  return { label: `${online}在线`, color: 'success' }
 }
 
 // ---------- 导入 / 导出 ----------
@@ -438,16 +460,30 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
       if (isLoading) {
         return h(NuxtIconC, { name: 'i-lucide-loader-circle', class: 'size-4 animate-spin text-muted' })
       }
-      if (!r) return h('span', { class: 'text-muted text-xs' }, '—')
+      if (!r) return h('span', { class: 'text-muted text-xs' }, '-')
+      // 不可达：红色 badge + tooltip(error)
+      if (!r.online) {
+        return h('div', { class: 'flex items-center gap-1' }, [
+          h(NuxtTooltipC, { content: r.error || '连接失败' }, () => [
+            h(NuxtBadgeC, { color: 'error', variant: 'outline', size: 'sm' }, () => '不可达'),
+          ]),
+        ])
+      }
+      // 在线但凭据无效：橙色 badge + ⚠️ 图标 + tooltip(authError)
+      if (r.authValid === false) {
+        return h('div', { class: 'flex items-center gap-1' }, [
+          h(NuxtTooltipC, { content: r.authError || '凭据无效' }, () => [
+            h(NuxtBadgeC, { color: 'warning', variant: 'soft', size: 'sm' }, () => '在线'),
+            h(NuxtIconC, { name: 'i-lucide-triangle-alert', class: 'size-3.5 text-warning shrink-0' }),
+          ]),
+        ])
+      }
+      // 在线且凭据有效（或未验证）：绿色 badge + latency
       return h('div', { class: 'flex items-center gap-1' }, [
-        h(NuxtBadgeC, {
-          color: r.online ? 'success' : 'error',
-          variant: r.online ? 'soft' : 'outline',
-          size: 'sm',
-        }, () => r.online ? '在线' : '离线'),
-        r.online && r.latency != null
+        h(NuxtBadgeC, { color: 'success', variant: 'soft', size: 'sm' }, () => '在线'),
+        r.latency != null
           ? h('span', { class: 'text-xs text-muted' }, `${r.latency}ms`)
-          : r.error ? h('span', { class: 'text-xs text-muted truncate max-w-32', title: r.error }, r.error) : null,
+          : null,
       ])
     },
     meta: { class: { th: 'w-40', td: 'w-40' } },
@@ -546,6 +582,12 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
               <span class="truncate font-semibold text-highlighted">{{ g.name }}</span>
               <NuxtBadge v-if="g.isDefault" color="neutral" variant="outline" size="sm">内置</NuxtBadge>
               <NuxtBadge color="neutral" variant="subtle" size="sm">{{ g.instances.length }} 个实例</NuxtBadge>
+              <NuxtBadge
+                v-if="getGroupConnectivitySummary(g)"
+                :color="getGroupConnectivitySummary(g)?.color as any"
+                variant="soft"
+                size="sm"
+              >{{ getGroupConnectivitySummary(g)?.label }}</NuxtBadge>
             </div>
             <div class="flex items-center gap-1">
               <NuxtButton

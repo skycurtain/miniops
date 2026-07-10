@@ -1,4 +1,4 @@
-import type { MinioInstance } from '../types'
+import type { MinioInstance, ListObjectsResult, DeleteObjectsResult, ObjectInfo } from '../types'
 import { createHash, createHmac } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { open, readFile } from 'node:fs/promises'
@@ -101,12 +101,13 @@ export async function testGroupConnectivity(instances: MinioInstance[]): Promise
 // ---------- AWS SigV4 预签名 URL ----------
 
 /**
- * 生成 AWS SigV4 预签名 PUT URL（用于 MinIO/S3 兼容存储）。
+ * 生成 AWS SigV4 预签名 URL（支持任意 method）。
  *
  * 不依赖任何 SDK，纯 Node crypto 实现。
  * 参考：https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
  */
-function presignPutUrl(opts: {
+function presignUrl(opts: {
+  method: string
   endpoint: string
   bucket: string
   objectKey: string
@@ -115,7 +116,7 @@ function presignPutUrl(opts: {
   region: string
   expiresIn: number
 }): string {
-  const { endpoint, bucket, objectKey, accessKey, secretKey, region, expiresIn } = opts
+  const { method, endpoint, bucket, objectKey, accessKey, secretKey, region, expiresIn } = opts
   const url = new URL(endpoint.replace(/\/+$/, ''))
   const host = url.host
 
@@ -145,7 +146,7 @@ function presignPutUrl(opts: {
     .join('&')
 
   const canonicalRequest = [
-    'PUT',
+    method,
     path,
     canonicalQueryString,
     `host:${host}`,
@@ -173,6 +174,40 @@ function presignPutUrl(opts: {
   // 拼接最终 URL
   const finalQuery = `${canonicalQueryString}&X-Amz-Signature=${signature}`
   return `${url.protocol}//${host}${path}?${finalQuery}`
+}
+
+/**
+ * 生成 AWS SigV4 预签名 PUT URL（用于 MinIO/S3 兼容存储）。
+ *
+ * 不依赖任何 SDK，纯 Node crypto 实现。
+ * 参考：https://docs.aws.amazon.com/AmazonS3/latest/API/sigv4-query-string-auth.html
+ */
+function presignPutUrl(opts: {
+  endpoint: string
+  bucket: string
+  objectKey: string
+  accessKey: string
+  secretKey: string
+  region: string
+  expiresIn: number
+}): string {
+  return presignUrl({ ...opts, method: 'PUT' })
+}
+
+/**
+ * 生成 AWS SigV4 预签名 GET URL（用于下载对象）。
+ * 复用 presignUrl，method 改为 GET。
+ */
+export function presignGetUrl(opts: {
+  endpoint: string
+  bucket: string
+  objectKey: string
+  accessKey: string
+  secretKey: string
+  region: string
+  expiresIn: number
+}): string {
+  return presignUrl({ ...opts, method: 'GET' })
 }
 
 /**
@@ -316,7 +351,7 @@ export async function listBuckets(instance: MinioInstance): Promise<ListBucketsR
     })
     clearTimeout(timer)
 
-    if (!res.ok) {
+    if (!res.ok && res.status !== 206) {
       const body = await res.text().catch(() => '')
       return {
         instanceId: instance.id,
@@ -653,4 +688,417 @@ export function sanitizeObjectKey(key: string): string {
     .map(seg => seg.replace(/^\.+/, ''))
     .filter(seg => seg.length > 0 && seg !== '..')
     .join('/')
+}
+
+// ---------- 对象浏览：ListObjectsV2 / DeleteMultipleObjects / GetObject ----------
+
+/** ListObjectsV2 单页最大返回数（S3 上限 1000） */
+const LIST_MAX_KEYS = 1000
+
+/**
+ * 列出 bucket 下指定前缀的对象和子前缀（虚拟文件夹）。
+ *
+ * 调用 S3 ListObjectsV2 API (GET /{bucket}?list-type=2&prefix=&delimiter=/)。
+ * 用 signRequest 签名，解析 XML 的 <Contents> 和 <CommonPrefixes>。
+ *
+ * @param prefix     对象前缀，空字符串表示根
+ * @param delimiter  分隔符，通常为 '/'（模拟虚拟文件夹）
+ * @param continuationToken 上一页返回的 NextContinuationToken，用于分页
+ */
+export async function listObjects(
+  instance: MinioInstance,
+  bucket: string,
+  prefix: string,
+  delimiter: string,
+  continuationToken?: string,
+): Promise<ListObjectsResult> {
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const host = new URL(endpoint).host
+  const path = `/${bucket}`
+
+  // 构建 query 参数（签名要求按 key 字母序）
+  const queryParams: [string, string][] = [
+    ['list-type', '2'],
+    ['prefix', prefix],
+    ['delimiter', delimiter],
+    ['max-keys', String(LIST_MAX_KEYS)],
+  ]
+  if (continuationToken) {
+    queryParams.push(['continuation-token', continuationToken])
+  }
+  queryParams.sort(([a], [b]) => a.localeCompare(b))
+
+  // canonical query string（值需 URI 编码）
+  const queryString = queryParams
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+    .join('&')
+
+  const payloadHash = createHash('sha256').update('').digest('hex')
+  const { authorization, amzDate } = signRequest({
+    method: 'GET',
+    endpoint,
+    path,
+    queryString,
+    accessKey: instance.accessKey,
+    secretKey: instance.secretKey,
+    region: 'us-east-1',
+    payloadHash,
+  })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const res = await fetch(`${endpoint}${path}?${queryString}`, {
+      method: 'GET',
+      headers: {
+        'Host': host,
+        'x-amz-content-sha256': payloadHash,
+        'x-amz-date': amzDate,
+        'Authorization': authorization,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      return {
+        objects: [],
+        commonPrefixes: [],
+        isTruncated: false,
+        error: `HTTP ${res.status}${body ? `: ${body.slice(0, 200)}` : ''}`,
+      }
+    }
+
+    const xml = await res.text()
+    return parseListObjectsXml(xml)
+  }
+  catch (e: any) {
+    clearTimeout(timer)
+    const err = e?.name === 'AbortError' ? '请求超时（30s）' : (e?.cause?.code || e?.message || '连接失败')
+    return {
+      objects: [],
+      commonPrefixes: [],
+      isTruncated: false,
+      error: err,
+    }
+  }
+}
+
+/**
+ * 解析 ListObjectsV2 的 XML 响应。
+ *
+ * 关键字段：
+ * - <Contents><Key>...</Key><Size>...</Size><LastModified>...</LastModified><ETag>...</ETag></Contents>
+ * - <CommonPrefixes><Prefix>...</Prefix></CommonPrefixes>
+ * - <IsTruncated>true|false</IsTruncated>
+ * - <NextContinuationToken>...</NextContinuationToken>
+ */
+function parseListObjectsXml(xml: string): ListObjectsResult {
+  const objects: ObjectInfo[] = []
+  const commonPrefixes: string[] = []
+
+  // 提取所有 <Contents>...</Contents> 块
+  const contentsRegex = /<Contents>([\s\S]*?)<\/Contents>/g
+  let match: RegExpExecArray | null
+  while ((match = contentsRegex.exec(xml)) !== null) {
+    const block = match[1] || ''
+    const key = extractXmlTag(block, 'Key')
+    const sizeStr = extractXmlTag(block, 'Size')
+    const lastModified = extractXmlTag(block, 'LastModified')
+    const etag = extractXmlTag(block, 'ETag')
+    if (key) {
+      objects.push({
+        key: unescapeXml(key),
+        size: sizeStr ? parseInt(sizeStr, 10) : 0,
+        lastModified: lastModified || '',
+        etag: etag?.replace(/"/g, ''),
+      })
+    }
+  }
+
+  // 提取所有 <CommonPrefixes><Prefix>...</Prefix></CommonPrefixes>
+  const prefixRegex = /<CommonPrefixes>\s*<Prefix>([^<]+)<\/Prefix>/g
+  while ((match = prefixRegex.exec(xml)) !== null) {
+    if (match[1]) commonPrefixes.push(unescapeXml(match[1]))
+  }
+
+  const isTruncated = extractXmlTag(xml, 'IsTruncated') === 'true'
+  const continuationToken = extractXmlTag(xml, 'NextContinuationToken') ?? undefined
+
+  return { objects, commonPrefixes, isTruncated, continuationToken }
+}
+
+/**
+ * 批量删除对象（S3 DeleteMultipleObjects API）。
+ *
+ * POST /{bucket}?delete，body 为 XML，包含要删除的 <Object><Key>...</Key></Object> 列表。
+ * 一次最多 1000 个。带 Content-MD5 头（S3 规范要求）。
+ */
+export async function deleteObjects(
+  instance: MinioInstance,
+  bucket: string,
+  keys: string[],
+): Promise<DeleteObjectsResult> {
+  if (keys.length === 0) {
+    return { deleted: [], errors: [] }
+  }
+  if (keys.length > 1000) {
+    return { deleted: [], errors: [{ key: '', error: '一次最多删除 1000 个对象' }] }
+  }
+
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const host = new URL(endpoint).host
+  const path = `/${bucket}`
+  // canonical query string: delete=（值为空，S3 规范要求保留 = 号）
+  const queryString = 'delete='
+
+  // 构造 XML body
+  const body = '<?xml version="1.0" encoding="UTF-8"?>'
+    + '<Delete>'
+    + keys.map(k => `<Object><Key>${escapeXml(k)}</Key></Object>`).join('')
+    + '<Quiet>false</Quiet>'
+    + '</Delete>'
+
+  const payloadHash = sha256Hex(body)
+  const { authorization, amzDate } = signRequest({
+    method: 'POST',
+    endpoint,
+    path,
+    queryString,
+    accessKey: instance.accessKey,
+    secretKey: instance.secretKey,
+    region: 'us-east-1',
+    payloadHash,
+  })
+
+  const contentMd5 = createHash('md5').update(body).digest('base64')
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const res = await fetch(`${endpoint}${path}?delete`, {
+      method: 'POST',
+      body,
+      headers: {
+        'Host': host,
+        'x-amz-content-sha256': payloadHash,
+        'x-amz-date': amzDate,
+        'Authorization': authorization,
+        'Content-Type': 'application/xml',
+        'Content-MD5': contentMd5,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+
+    if (!res.ok) {
+      const errBody = await res.text().catch(() => '')
+      return {
+        deleted: [],
+        errors: keys.map(k => ({ key: k, error: `HTTP ${res.status}: ${errBody.slice(0, 200)}` })),
+      }
+    }
+
+    const xml = await res.text()
+    return parseDeleteResultXml(xml, keys)
+  }
+  catch (e: any) {
+    clearTimeout(timer)
+    const err = e?.name === 'AbortError' ? '请求超时（30s）' : (e?.cause?.code || e?.message || '连接失败')
+    return { deleted: [], errors: keys.map(k => ({ key: k, error: err })) }
+  }
+}
+
+/** XML 特殊字符转义 */
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;')
+}
+
+/** XML 特殊字符反转义（S3 响应中的 Key/Prefix/Message 等文本会被转义） */
+function unescapeXml(s: string): string {
+  return s
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+}
+
+/**
+ * 解析 DeleteMultipleObjects 响应。
+ *
+ * <DeleteResult>
+ *   <Deleted><Key>...</Key></Deleted>
+ *   <Error><Key>...</Key><Code>...</Code><Message>...</Message></Error>
+ * </DeleteResult>
+ *
+ * 约定：响应中既不在 <Deleted> 也不在 <Error> 的 key，视为删除成功（兜底）。
+ */
+function parseDeleteResultXml(xml: string, requestedKeys: string[]): DeleteObjectsResult {
+  const deleted: string[] = []
+  const errors: { key: string, error: string }[] = []
+
+  // 已删除
+  const deletedRegex = /<Deleted>\s*<Key>([^<]+)<\/Key>/g
+  let match: RegExpExecArray | null
+  while ((match = deletedRegex.exec(xml)) !== null) {
+    if (match[1]) deleted.push(unescapeXml(match[1]))
+  }
+
+  // 失败
+  const errorRegex = /<Error>([\s\S]*?)<\/Error>/g
+  while ((match = errorRegex.exec(xml)) !== null) {
+    const block = match[1] || ''
+    const key = extractXmlTag(block, 'Key')
+    const code = extractXmlTag(block, 'Code')
+    const message = extractXmlTag(block, 'Message')
+    if (key) {
+      errors.push({ key: unescapeXml(key), error: `${code || 'Error'}: ${message ? unescapeXml(message) : ''}` })
+    }
+  }
+
+  // 兜底：未在响应中出现的 key 视为删除成功
+  const accounted = new Set([...deleted, ...errors.map(e => e.key)])
+  for (const k of requestedKeys) {
+    if (!accounted.has(k)) deleted.push(k)
+  }
+
+  return { deleted, errors }
+}
+
+/** 递归删除的安全上限，防止误删超大规模文件夹导致长时间阻塞 */
+const RECURSIVE_DELETE_LIMIT = 10000
+
+/**
+ * 递归删除指定前缀下的所有对象。
+ *
+ * 先用 listObjects（delimiter="" 递归列出）分页收集全部 key，
+ * 再分批调 deleteObjects（每批 1000 个）。
+ *
+ * @param prefixes 文件夹前缀列表，如 ["sub-folder/", "backup/2024/"]
+ */
+export async function deleteByPrefixes(
+  instance: MinioInstance,
+  bucket: string,
+  prefixes: string[],
+): Promise<DeleteObjectsResult> {
+  const allDeleted: string[] = []
+  const allErrors: { key: string, error: string }[] = []
+
+  for (const prefix of prefixes) {
+    // 递归列出该前缀下所有对象（delimiter="" 不分组虚拟文件夹）
+    const keys: string[] = []
+    let token: string | undefined
+    do {
+      const result = await listObjects(instance, bucket, prefix, '', token)
+      if (result.error) {
+        allErrors.push({ key: prefix, error: `列出对象失败: ${result.error}` })
+        break
+      }
+      keys.push(...result.objects.map(o => o.key))
+      token = result.isTruncated ? result.continuationToken : undefined
+
+      // 安全上限
+      if (keys.length > RECURSIVE_DELETE_LIMIT) {
+        allErrors.push({ key: prefix, error: `文件夹下对象过多（>${RECURSIVE_DELETE_LIMIT}），请缩小范围后重试` })
+        break
+      }
+    } while (token)
+
+    // 跳过因超限而中断的前缀
+    const prefixHasError = allErrors.some(e => e.key === prefix)
+    if (prefixHasError) continue
+
+    // 分批删除（每批 1000 个）
+    for (let i = 0; i < keys.length; i += 1000) {
+      const batch = keys.slice(i, i + 1000)
+      const result = await deleteObjects(instance, bucket, batch)
+      allDeleted.push(...result.deleted)
+      allErrors.push(...result.errors)
+    }
+  }
+
+  return { deleted: allDeleted, errors: allErrors }
+}
+
+/**
+ * 获取对象内容流（S3 GetObject）。
+ *
+ * 返回 fetch 的 Response 和 cleanup 函数。调用方从 res.body 读取 ReadableStream 转发，
+ * 流结束后必须调 cleanup() 清理超时定时器，避免连接泄漏。
+ * 不缓冲整个文件到内存，支持大文件流式下载。
+ *
+ * @param rangeHeader  HTTP Range 请求头值（如 "bytes=0-1048575"），透传给 MinIO 支持 Range 请求
+ */
+export async function getObjectStream(
+  instance: MinioInstance,
+  bucket: string,
+  objectKey: string,
+  rangeHeader?: string,
+): Promise<{ response: Response | null, error?: string, cleanup?: () => void }> {
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const host = new URL(endpoint).host
+  const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/')
+  const path = `/${bucket}/${encodedKey}`
+  const queryString = ''
+  const payloadHash = createHash('sha256').update('').digest('hex')
+
+  const { authorization, amzDate } = signRequest({
+    method: 'GET',
+    endpoint,
+    path,
+    queryString,
+    accessKey: instance.accessKey,
+    secretKey: instance.secretKey,
+    region: 'us-east-1',
+    payloadHash,
+  })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 600000) // 大文件下载 10 分钟超时
+  // cleanup：清理定时器，调用方在流结束后调
+  const cleanup = () => {
+    clearTimeout(timer)
+  }
+
+  try {
+    const headers: Record<string, string> = {
+      'Host': host,
+      'x-amz-content-sha256': payloadHash,
+      'x-amz-date': amzDate,
+      'Authorization': authorization,
+    }
+    // 透传 Range 请求头（视频预览等场景浏览器会发 Range 请求）
+    if (rangeHeader) {
+      headers['Range'] = rangeHeader
+    }
+
+    const res = await fetch(`${endpoint}${path}`, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    })
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '')
+      clearTimeout(timer)
+      return { response: null, error: `HTTP ${res.status}: ${body.slice(0, 200)}` }
+    }
+
+    // 成功：返回 response 和 cleanup，调用方在流结束后调 cleanup
+    return { response: res, cleanup }
+  }
+  catch (e: any) {
+    clearTimeout(timer)
+    const err = e?.name === 'AbortError' ? '请求超时' : (e?.cause?.code || e?.message || '连接失败')
+    return { response: null, error: err }
+  }
 }

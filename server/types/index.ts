@@ -134,3 +134,39 @@ export interface DispatchEvent {
     failed: number
   }
 }
+
+// ---------- 对象浏览相关类型 ----------
+
+/** 单个对象信息（ListObjectsV2 的 <Contents> 项） */
+export interface ObjectInfo {
+  /** 对象完整 Key，如 "config/2025Q3/device.json" */
+  key: string
+  /** 文件大小（字节） */
+  size: number
+  /** 最后修改时间（ISO 字符串） */
+  lastModified: string
+  /** ETag（可用作版本标识） */
+  etag?: string
+}
+
+/** ListObjectsV2 结果 */
+export interface ListObjectsResult {
+  /** 对象列表（<Contents>） */
+  objects: ObjectInfo[]
+  /** 公共前缀列表（<CommonPrefixes>，虚拟文件夹） */
+  commonPrefixes: string[]
+  /** 是否已截断（还有更多未返回） */
+  isTruncated: boolean
+  /** 下一页的 continuationToken */
+  continuationToken?: string
+  /** 错误信息 */
+  error?: string
+}
+
+/** 删除对象结果 */
+export interface DeleteObjectsResult {
+  /** 已成功删除的 key 列表 */
+  deleted: string[]
+  /** 删除失败的项 */
+  errors: { key: string, error: string }[]
+}

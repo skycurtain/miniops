@@ -9,6 +9,7 @@ const navItems = [
     defaultOpen: true,
     children: [
       { label: '文件分发', to: '/ops/dispatch', icon: 'i-lucide-send' },
+      { label: '对象浏览', to: '/ops/browser', icon: 'i-lucide-folder-search' },
     ],
   },
 ]

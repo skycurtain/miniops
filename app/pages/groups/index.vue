@@ -502,6 +502,12 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
           onClick: () => testOne(groupId, inst),
         }),
         h(NuxtButtonC, {
+          size: 'xs', color: 'info', variant: 'soft', icon: 'i-lucide-folder-search',
+          label: '浏览',
+          disabled: !inst.enabled,
+          to: `/ops/browser?instanceId=${inst.id}`,
+        }),
+        h(NuxtButtonC, {
           size: 'xs', color: 'neutral', variant: 'ghost',
           label: inst.enabled ? '禁用' : '启用',
           icon: inst.enabled ? 'i-lucide-circle-off' : 'i-lucide-circle-check',
@@ -521,7 +527,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
         }),
       ])
     },
-    meta: { class: { th: 'w-72', td: 'w-72' } },
+    meta: { class: { th: 'w-80', td: 'w-80' } },
   },
 ]
 </script>

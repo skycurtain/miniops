@@ -10,6 +10,7 @@ const navItems = [
     children: [
       { label: '文件分发', to: '/ops/dispatch', icon: 'i-lucide-send' },
       { label: '对象浏览', to: '/ops/browser', icon: 'i-lucide-folder-search' },
+      { label: '批量清理', to: '/ops/cleanup', icon: 'i-lucide-trash-2' },
     ],
   },
 ]

@@ -170,3 +170,49 @@ export interface DeleteObjectsResult {
   /** 删除失败的项 */
   errors: { key: string, error: string }[]
 }
+
+// ---------- 批量清理相关类型 ----------
+
+/** 清理任务请求 */
+export interface CleanupRequest {
+  /** 目标实例 ID 列表 */
+  instanceIds: string[]
+  /** 目标 bucket（所有实例共用） */
+  bucket: string
+  /** 前缀（留空 = bucket 根） */
+  prefix?: string
+  /** 是否递归删除子前缀（无 keys/prefixes 时生效） */
+  recursive?: boolean
+  /** 要删除的具体对象 key 列表（来自预览勾选，可选） */
+  keys?: string[]
+  /** 要递归删除的文件夹前缀列表（来自预览勾选，可选） */
+  prefixes?: string[]
+}
+
+/** 单个对象/前缀清理结果 */
+export interface CleanupResult {
+  instanceId: string
+  instanceName: string
+  /** 对象 key 或文件夹前缀 */
+  target: string
+  /** 是文件夹前缀还是单个对象 */
+  targetType: 'object' | 'prefix'
+  status: 'success' | 'failed'
+  error?: string
+  /** 删除的对象数（文件夹递归时可能 >1） */
+  deletedCount?: number
+  /** 耗时（毫秒） */
+  duration?: number
+}
+
+/** 清理任务 */
+export interface CleanupTask {
+  id: string
+  request: CleanupRequest
+  status: 'pending' | 'running' | 'done'
+  /** 展开后的目标实例列表（去重后，仅 enabled） */
+  resolvedInstances: MinioInstance[]
+  results: CleanupResult[]
+  createdAt: string
+  finishedAt?: string
+}

@@ -1,0 +1,21 @@
+[
+  {
+    "id": "grp-default",
+    "name": "默认",
+    "description": "未分组的实例",
+    "isDefault": true,
+    "createdAt": "2025-07-15T10:00:00.000Z",
+    "updatedAt": "2025-07-15T10:00:00.000Z",
+    "instances": [
+      {
+        "id": "inst-00000000-0000-0000-0000-000000000000",
+        "groupId": "grp-default",
+        "name": "localhost",
+        "endpoint": "http://localhost:9000",
+        "accessKey": "minioadmin",
+        "secretKey": "minioadmin",
+        "enabled": true
+      }
+    ]
+  }
+]

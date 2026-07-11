@@ -28,3 +28,6 @@ logs
 
 # Upload staging (V2 分发暂存)
 server/data/uploads/
+
+# Runtime data (含实例凭据，首次运行自动生成)
+server/data/groups.json

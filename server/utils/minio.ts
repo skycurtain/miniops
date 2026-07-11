@@ -101,6 +101,26 @@ export async function testGroupConnectivity(instances: MinioInstance[]): Promise
 // ---------- AWS SigV4 预签名 URL ----------
 
 /**
+ * URI 编码 objectKey（保留 / 分隔符）。
+ *
+ * S3 SigV4 canonical URI 要求只保留 A-Za-z0-9-_.~ 和 / 不编码，
+ * 其他字符全部 URI 编码。encodeURIComponent 的不编码集更大（额外保留
+ * !'()*），与 S3 规范不一致，会导致含这些字符的 key 签名校验失败。
+ * 这里在 encodeURIComponent 基础上补齐 !'()* 的编码。
+ */
+function encodeObjectKey(key: string): string {
+  return key
+    .split('/')
+    .map(seg => encodeURIComponent(seg)
+      .replace(/!/g, '%21')
+      .replace(/'/g, '%27')
+      .replace(/\(/g, '%28')
+      .replace(/\)/g, '%29')
+      .replace(/\*/g, '%2A'))
+    .join('/')
+}
+
+/**
  * 生成 AWS SigV4 预签名 URL（支持任意 method）。
  *
  * 不依赖任何 SDK，纯 Node crypto 实现。
@@ -121,7 +141,7 @@ function presignUrl(opts: {
   const host = url.host
 
   // 对象路径：/{bucket}/{key}，key 需 URI 编码（但 / 保留）
-  const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/')
+  const encodedKey = encodeObjectKey(objectKey)
   const path = `/${bucket}/${encodedKey}`
 
   const now = new Date()
@@ -488,7 +508,7 @@ async function uploadLarge(
   contentType: string,
 ): Promise<void> {
   const endpoint = instance.endpoint.replace(/\/+$/, '')
-  const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/')
+  const encodedKey = encodeObjectKey(objectKey)
   const path = `/${bucket}/${encodedKey}`
   const host = new URL(endpoint).host
 
@@ -600,7 +620,7 @@ async function abortMultipartUpload(
   uploadId: string,
 ): Promise<void> {
   const endpoint = instance.endpoint.replace(/\/+$/, '')
-  const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/')
+  const encodedKey = encodeObjectKey(objectKey)
   const path = `/${bucket}/${encodedKey}`
   const host = new URL(endpoint).host
 
@@ -1046,7 +1066,7 @@ export async function getObjectStream(
 ): Promise<{ response: Response | null, error?: string, cleanup?: () => void }> {
   const endpoint = instance.endpoint.replace(/\/+$/, '')
   const host = new URL(endpoint).host
-  const encodedKey = objectKey.split('/').map(encodeURIComponent).join('/')
+  const encodedKey = encodeObjectKey(objectKey)
   const path = `/${bucket}/${encodedKey}`
   const queryString = ''
   const payloadHash = createHash('sha256').update('').digest('hex')

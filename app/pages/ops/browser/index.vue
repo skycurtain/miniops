@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import ConfirmDialog from '~/components/ConfirmDialog.vue'
+import BrowserUploadModal from '~/components/BrowserUploadModal.vue'
 
 // ---------- 类型定义（与后端对齐） ----------
 interface MinioInstance {
@@ -722,6 +723,9 @@ watch([bucketList, selectedBucket], () => {
   }
 })
 
+// ---------- 上传对话框 ----------
+const showUploadModal = ref(false)
+
 // 页面标题
 useHead({ title: '对象浏览 · miniops' })
 </script>
@@ -731,7 +735,7 @@ useHead({ title: '对象浏览 · miniops' })
     <!-- 页头 -->
     <div class="flex flex-col gap-1">
       <h1 class="text-2xl font-bold text-highlighted">对象浏览</h1>
-      <p class="text-muted">查看 MinIO 实例 bucket 中的对象，支持下载与删除</p>
+      <p class="text-muted">查看 MinIO 实例 bucket 中的对象，支持上传、下载与删除</p>
     </div>
 
     <!-- 1. 选实例 -->
@@ -853,6 +857,15 @@ useHead({ title: '对象浏览 · miniops' })
           <span v-if="selectedFolderCount > 0" class="text-warning">（含 {{ selectedFolderCount }} 个文件夹）</span>
         </span>
         <div class="flex-1" />
+        <NuxtButton
+          size="sm"
+          color="primary"
+          variant="outline"
+          icon="i-lucide-upload"
+          label="上传"
+          :disabled="!selectedInstanceId || !selectedBucket"
+          @click="showUploadModal = true"
+        />
         <NuxtButton
           v-if="selectedCount > 0"
           size="sm"
@@ -1107,5 +1120,16 @@ useHead({ title: '对象浏览 · miniops' })
         </div>
       </template>
     </NuxtSlideover>
+
+    <!-- 上传对话框 -->
+    <BrowserUploadModal
+      v-model:open="showUploadModal"
+      :instance-id="selectedInstanceId"
+      :instance-name="selectedInstance?.name ?? ''"
+      :endpoint="selectedInstance?.endpoint ?? ''"
+      :bucket="selectedBucket"
+      :prefix="currentPrefix"
+      @complete="loadObjects()"
+    />
   </div>
 </template>

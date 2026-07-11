@@ -22,7 +22,7 @@ bun run .output/server/index.mjs  # 生产启动
 ## 架构概要
 
 ```
-浏览器 ──HTTP/SSE──► 控制中心 (Nuxt/Nitro) ──S3 协议──► N 个 MinIO 实例
+浏览器 ──HTTP/SSE──► miniops 服务端 (Nuxt/Nitro) ──S3 协议──► N 个 MinIO 实例
 ```
 
 - **代理模式**：浏览器不直连 MinIO，所有 S3 操作由后端代理。密钥不进浏览器。

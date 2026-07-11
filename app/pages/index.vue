@@ -51,7 +51,7 @@ onMounted(() => {
     <!-- 页头 -->
     <div class="flex flex-col gap-1">
       <h1 class="text-2xl font-bold text-highlighted">总览</h1>
-      <p class="text-muted">miniops 控制中心 · MinIO 批量运维平台</p>
+      <p class="text-muted">MinIO 批量运维平台</p>
     </div>
 
     <!-- 统计卡片 -->

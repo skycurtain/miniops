@@ -7,17 +7,17 @@ import type { InstanceGroup } from '../../types'
 export default defineEventHandler((event) => {
   const template: InstanceGroup[] = [
     {
-      id: 'grp-line-1',
-      name: '1号线',
-      description: '1号线全部车站',
+      id: 'grp-a',
+      name: '节点组 A',
+      description: '节点组 A 全部实例',
       isDefault: false,
       createdAt: '2025-07-15T10:00:00.000Z',
       updatedAt: '2025-07-15T10:00:00.000Z',
       instances: [
         {
           id: 'inst-001',
-          groupId: 'grp-line-1',
-          name: '人民广场站',
+          groupId: 'grp-east',
+          name: '实例 1',
           endpoint: 'http://10.24.0.10:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',
@@ -25,8 +25,8 @@ export default defineEventHandler((event) => {
         },
         {
           id: 'inst-002',
-          groupId: 'grp-line-1',
-          name: '南京东路站',
+          groupId: 'grp-east',
+          name: '实例 2',
           endpoint: 'http://10.24.0.11:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',
@@ -35,17 +35,17 @@ export default defineEventHandler((event) => {
       ],
     },
     {
-      id: 'grp-line-2',
-      name: '2号线',
-      description: '2号线全部车站（示例：禁用状态的实例）',
+      id: 'grp-b',
+      name: '节点组 B',
+      description: '节点组 B 全部实例（示例：禁用状态的实例）',
       isDefault: false,
       createdAt: '2025-07-15T10:00:00.000Z',
       updatedAt: '2025-07-15T10:00:00.000Z',
       instances: [
         {
           id: 'inst-003',
-          groupId: 'grp-line-2',
-          name: '静安寺站',
+          groupId: 'grp-west',
+          name: '实例 3',
           endpoint: 'http://10.24.0.20:9000',
           accessKey: 'minioadmin',
           secretKey: 'minioadmin',

@@ -635,7 +635,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
       <template #body>
         <NuxtForm :schema="groupSchema" :state="groupState" class="flex flex-col gap-4" @submit="onSubmitGroup">
           <NuxtFormField label="组名称" name="name" required>
-            <NuxtInput v-model="groupState.name" placeholder="如：1号线、核心机房" class="w-full" />
+            <NuxtInput v-model="groupState.name" placeholder="如：节点组 A" class="w-full" />
           </NuxtFormField>
           <NuxtFormField label="描述" name="description">
             <NuxtTextarea v-model="groupState.description" placeholder="可选" :rows="2" class="w-full" />
@@ -653,7 +653,7 @@ const instanceColumns: TableColumn<MinioInstance>[] = [
       <template #body>
         <NuxtForm :schema="instanceSchema" :state="instanceState" class="flex flex-col gap-4" @submit="onSubmitInstance">
           <NuxtFormField label="实例名称" name="name" required>
-            <NuxtInput v-model="instanceState.name" placeholder="如：人民广场站" class="w-full" />
+            <NuxtInput v-model="instanceState.name" placeholder="如：实例 1" class="w-full" />
           </NuxtFormField>
           <NuxtFormField label="Endpoint" name="endpoint" required>
             <NuxtInput v-model="instanceState.endpoint" placeholder="http://10.24.0.10:9000" class="w-full font-mono text-sm" />

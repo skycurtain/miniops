@@ -100,7 +100,7 @@ function getPreviewType(key: string): PreviewType {
 │                                                        │
 │  [✕]  config.json                              [下载]   │  ← 顶部：文件名 + 下载按钮
 │       2.1KB · 2025-07-15 14:32                         │     元信息行
-│       人民广场站 / config                              │     目标实例/bucket
+│       实例 1 / config                              │     目标实例/bucket
 │                                                        │
 │  ┌──────────────────────────────────────────────────┐ │
 │  │                                                    │ │  ← 内容区（按类型渲染）
@@ -123,7 +123,7 @@ function getPreviewType(key: string): PreviewType {
 ```
 [✕]  config.json                              [下载]
      2.1KB · 2025-07-15 14:32
-     人民广场站 / config
+     实例 1 / config
 ```
 
 - 左侧：✕ 关闭按钮 + 文件名（Key 最后一段）

@@ -9,7 +9,7 @@ export interface MinioInstance {
   id: string
   /** 归属的实例组 ID */
   groupId: string
-  /** 实例名称，业务语义由用户自由填写，如"人民广场站" */
+  /** 实例名称，业务语义由用户自由填写，如"实例 1" */
   name: string
   /** MinIO 端点，如 http://10.24.0.10:9000 */
   endpoint: string
@@ -25,7 +25,7 @@ export interface MinioInstance {
 export interface InstanceGroup {
   /** 组 ID，全局唯一 */
   id: string
-  /** 组名称，如"1号线"、"默认" */
+  /** 组名称，如"节点组 A"、"默认" */
   name: string
   /** 组描述 */
   description?: string

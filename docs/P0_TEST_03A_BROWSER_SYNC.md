@@ -144,15 +144,14 @@
 
 ### 用例 T4：多文件 + 文件夹前缀递归
 
-**目标**：验证跨前缀累积选择 + 文件夹递归展开扫描。
+**目标**：验证同前缀下多选对象 + 文件夹前缀递归展开扫描。
 
 #### 步骤
 
 1. 在 browser 进入 `test` bucket 根目录
-2. 前缀跳转到 `2025/`，勾选其中的对象
-3. 面包屑回到根目录，勾选 `文件夹/` 前缀（跨前缀累积）
-4. 点「同步到...」→ 选目标 → 开始同步
-5. 观察扫描阶段
+2. 同时勾选若干对象（如 `配置文件.json`）和文件夹前缀（如 `2025/`、`文件夹/`）
+3. 点「同步到...」-> 选目标 -> 填目标前缀 `synctest/` -> 开始同步
+4. 观察扫描阶段
 
 #### 判断标准
 
@@ -296,7 +295,7 @@
 | P3 | 浮窗自动淡出 | `SyncFloatingIndicator.vue` `watch(taskSummary)` | 全部成功 3 秒淡出--若卡住不消失，说明 `taskSummary.failed === 0` 判断或 timer 有问题 |
 | P4 | 同步完成后列表刷新 | `browser/index.vue` `@complete="loadObjects()"` | 同步完成时（SSE complete 事件）browser 对象列表是否重新加载 |
 | P5 | Modal 反复打开状态清理 | `useSync.ts` `reset()` | 同步完成后再次打开 Modal，是否彻底回到 select 阶段 |
-| P6 | 跨前缀累积选择 | browser 页 `selectedKeys`/`selectedPrefixes` | 切换前缀后已选对象是否保留，Modal 源区计数是否正确 |
+| P6 | 同前缀多选 + 文件夹递归 | browser 页 `selectedKeys`/`selectedPrefixes` | 同前缀下同时勾选对象和文件夹前缀，Modal 源区计数是否正确，扫描展开是否正常 |
 | P7 | 同步弹窗右上角 X | `SyncTargetModal.vue` `NuxtModal` 未设 `:close` | 进行中阶段右上角 X 仍可点击关闭（待后续对齐上传弹窗的隐藏模式，见 memory `sync-modal-close-control`） |
 
 ---

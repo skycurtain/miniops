@@ -1166,6 +1166,8 @@ function escapeXml(s: string): string {
 /** XML 特殊字符反转义（S3 响应中的 Key/Prefix/Message 等文本会被转义） */
 function unescapeXml(s: string): string {
   return s
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)))
     .replace(/&amp;/g, '&')
     .replace(/&lt;/g, '<')
     .replace(/&gt;/g, '>')

@@ -732,6 +732,13 @@ const syncTaskActive = computed(() => sync.taskActive.value)
 const syncCompletedCount = computed(() => sync.totalCompleted.value)
 const syncTotalCount = computed(() => sync.totalCount.value)
 
+// 后台运行时同步完成：自动重新打开 Modal 显示结果
+watch(() => sync.taskSummary.value, (summary) => {
+  if (summary && !showSyncModal.value) {
+    showSyncModal.value = true
+  }
+})
+
 // 页面标题
 useHead({ title: '对象浏览 · miniops' })
 </script>

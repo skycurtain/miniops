@@ -319,7 +319,7 @@ docker run --rm --entrypoint sh minio/mc:latest -c 'mc alias set local http://ho
 | T3 | 组级批量 bucket | ☑ 通过 | |
 | T4 | 多文件 + 文件夹递归 | ☑ 通过 | 含 &#39; XML 转义修复 |
 | T5 | 大文件 multipart | ☑ 通过 | |
-| T6 | 有失败的同步 | ☐ 通过 ☐ 失败 | |
+| T6 | 有失败的同步 | — 跳过 | 正常操作下无法填不存在的 bucket，测试前提不成立 |
 | T7 | 悬浮指示器 | ☐ 通过 ☐ 失败 | |
 | T8 | Modal 反复打开 | ☐ 通过 ☐ 失败 | |
 | T9 | 凭据无效实例 | ☐ 通过 ☐ 失败 | |

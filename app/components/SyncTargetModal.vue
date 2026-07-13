@@ -285,7 +285,6 @@ watch(() => props.open, (val) => {
         <!-- progress 阶段 -->
         <template v-else-if="sync.modalPhase.value === 'progress'">
           <NuxtButton color="neutral" variant="ghost" label="后台继续" @click="onBackground" />
-          <NuxtButton color="neutral" variant="ghost" label="关闭" disabled />
         </template>
         <!-- done 阶段 -->
         <template v-else>

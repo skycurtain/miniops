@@ -410,7 +410,7 @@ useHead({ title: '批量清理 · miniops' })
           class="w-full max-w-md"
           :disabled="cleanup.isRunning.value"
         >
-          <template #label>
+          <template #default>
             <span v-if="cleanup.selectedBucket.value" class="font-mono truncate">{{ cleanup.selectedBucket.value }}</span>
             <span v-else class="text-muted">{{ bucketIntersection.length ? '选择 bucket' : '无公共 bucket' }}</span>
           </template>
@@ -484,7 +484,7 @@ useHead({ title: '批量清理 · miniops' })
             class="w-56"
             :disabled="cleanup.isRunning.value"
           >
-            <template #label>
+            <template #default>
               <span class="truncate">{{ previewReferenceOptions.find(o => o.value === cleanup.previewReferenceInstanceId.value)?.label || '选择参考实例' }}</span>
             </template>
           </NuxtSelectMenu>

@@ -135,6 +135,101 @@ export interface DispatchEvent {
   }
 }
 
+// ---------- 实例间同步相关类型 ----------
+
+/** 同步源配置 */
+export interface SyncSource {
+  /** 源实例 ID */
+  instanceId: string
+  /** 源 bucket */
+  bucket: string
+  /** 源浏览前缀（用于计算相对路径），如 "config/" */
+  prefix: string
+  /** 勾选的具体对象 key 列表（完整路径） */
+  keys: string[]
+  /** 勾选的文件夹前缀列表（递归展开） */
+  prefixes: string[]
+}
+
+/** 同步目标配置 */
+export interface SyncTarget {
+  /** 目标实例 ID 列表 */
+  instanceIds: string[]
+  /** 按实例指定 bucket */
+  instanceBuckets: Record<string, string>
+  /** 目标前缀（留空 = bucket 根） */
+  prefix: string
+}
+
+/** 同步请求 */
+export interface SyncRequest {
+  source: SyncSource
+  targets: SyncTarget
+}
+
+/** 扫描后的源对象信息 */
+export interface SyncFileInfo {
+  /** 源端完整 key，如 "config/data/app.json" */
+  key: string
+  /** 相对源浏览前缀的路径，如 "data/app.json" */
+  relativeKey: string
+  /** 文件大小（字节） */
+  size: number
+  /** 推断的 MIME 类型 */
+  contentType: string
+}
+
+/** 同步结果（与 DispatchResult 同构，复用前端进度视图） */
+export interface SyncResult {
+  instanceId: string
+  instanceName: string
+  /** = relativeKey（相对路径），用于目标 key 拼接 */
+  fileName: string
+  status: 'success' | 'failed'
+  error?: string
+  /** 耗时（毫秒） */
+  duration?: number
+}
+
+/** 同步任务 */
+export interface SyncTask {
+  id: string
+  request: SyncRequest
+  status: 'pending' | 'scanning' | 'running' | 'done'
+  /** 目标实例列表（仅目标，不含源） */
+  resolvedInstances: MinioInstance[]
+  /** 源实例（单独存，不在 resolvedInstances 中） */
+  sourceInstance: MinioInstance
+  /** 扫描展开后的对象列表 */
+  resolvedFiles: SyncFileInfo[]
+  /** instance×file 结果矩阵 */
+  results: SyncResult[]
+  createdAt: string
+  finishedAt?: string
+}
+
+/** 同步 SSE 事件 */
+export interface SyncEvent {
+  type: 'scan-progress' | 'scan-complete' | 'start' | 'progress' | 'complete'
+  taskId: string
+  /** scan-progress: 已发现对象数 */
+  scannedCount?: number
+  /** scan-complete: 完整对象列表 */
+  files?: SyncFileInfo[]
+  /** scan-complete: 总数 */
+  totalCount?: number
+  /** scan-complete: 总大小 */
+  totalSize?: number
+  /** progress: 单文件结果 */
+  result?: SyncResult
+  /** complete: 汇总 */
+  summary?: {
+    total: number
+    success: number
+    failed: number
+  }
+}
+
 // ---------- 对象浏览相关类型 ----------
 
 /** 单个对象信息（ListObjectsV2 的 <Contents> 项） */

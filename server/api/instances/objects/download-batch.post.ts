@@ -1,5 +1,6 @@
 import { getGroups } from '../../../utils/store'
 import { listObjects, getObjectStream } from '../../../utils/minio'
+// @ts-ignore
 import { ZipArchive } from 'archiver'
 import { Readable } from 'node:stream'
 import type { MinioInstance } from '../../../types'
@@ -102,7 +103,7 @@ export default defineEventHandler(async (event) => {
       }
       // ZIP 内路径用对象 key（保持目录结构）
       // response.body 是 Web ReadableStream，需转为 Node Readable 供 archiver 使用
-      const nodeStream = Readable.fromWeb(response.body!)
+      const nodeStream = Readable.fromWeb(response.body as any)
       archive.append(nodeStream, { name: key })
     }
 

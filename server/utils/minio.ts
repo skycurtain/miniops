@@ -494,11 +494,14 @@ async function uploadSmall(
 /**
  * 大文件上传：手写 S3 Multipart Upload 三步。
  *
- * ① Initiate (POST ?uploads) → 拿 UploadId
- * ② UploadPart ×N (PUT ?partNumber=N&uploadId=X) → 收集 ETag
- * ③ Complete (POST ?uploadId=X, body=XML) → 完成
+ * ① Initiate (POST ?uploads) -> 拿 UploadId
+ * ② UploadPart ×N (PUT ?partNumber=N&uploadId=X) -> 收集 ETag
+ * ③ Complete (POST ?uploadId=X, body=XML) -> 完成
  *
  * 失败时调 abortMultipartUpload 清理 MinIO 侧残留，避免占用空间。
+ *
+ * 内部调用提取后的 initiateMultipartUpload / uploadPartFromBuffer /
+ * completeMultipartUpload 独立函数，这些函数同时供流式上传复用。
  */
 async function uploadLarge(
   instance: MinioInstance,
@@ -510,31 +513,9 @@ async function uploadLarge(
   const endpoint = instance.endpoint.replace(/\/+$/, '')
   const encodedKey = encodeObjectKey(objectKey)
   const path = `/${bucket}/${encodedKey}`
-  const host = new URL(endpoint).host
 
   // ① 创建 multipart upload
-  const createQuery = 'uploads='
-  const { authorization: a1, amzDate: d1 } = signRequest({
-    method: 'POST', endpoint, path, queryString: createQuery,
-    accessKey: instance.accessKey, secretKey: instance.secretKey,
-    region: 'us-east-1', payloadHash: EMPTY_SHA256,
-  })
-  const createRes = await fetch(`${endpoint}${path}?uploads`, {
-    method: 'POST',
-    headers: {
-      'Host': host,
-      'x-amz-content-sha256': EMPTY_SHA256,
-      'x-amz-date': d1,
-      'Authorization': a1,
-      'Content-Type': contentType,
-    },
-  })
-  if (!createRes.ok) {
-    const body = await createRes.text().catch(() => '')
-    throw new Error(`创建 multipart 失败: ${createRes.status} ${createRes.statusText}${body ? ` - ${body.slice(0, 200)}` : ''}`)
-  }
-  const uploadId = extractXmlTag(await createRes.text(), 'UploadId')
-  if (!uploadId) throw new Error('创建 multipart 失败: 未拿到 UploadId')
+  const uploadId = await initiateMultipartUpload(instance, endpoint, path, contentType)
 
   // ② 逐片上传
   const size = statSync(localPath).size
@@ -549,58 +530,14 @@ async function uploadLarge(
       const chunk = Buffer.alloc(end - start)
       await fd.read(chunk, 0, chunk.length, start)
 
-      const partQuery = `partNumber=${n}&uploadId=${encodeURIComponent(uploadId)}`
-      const { authorization: a2, amzDate: d2 } = signRequest({
-        method: 'PUT', endpoint, path, queryString: partQuery,
-        accessKey: instance.accessKey, secretKey: instance.secretKey,
-        region: 'us-east-1', payloadHash: UNSIGNED_PAYLOAD,
-      })
-      const partRes = await fetch(`${endpoint}${path}?${partQuery}`, {
-        method: 'PUT',
-        body: chunk,
-        headers: {
-          'Host': host,
-          'x-amz-content-sha256': UNSIGNED_PAYLOAD,
-          'x-amz-date': d2,
-          'Authorization': a2,
-        },
-      })
-      if (!partRes.ok) {
-        const body = await partRes.text().catch(() => '')
-        throw new Error(`分片 ${n}/${partCount} 上传失败: ${partRes.status}${body ? ` - ${body.slice(0, 200)}` : ''}`)
-      }
-      const etag = partRes.headers.get('etag')
-      if (!etag) throw new Error(`分片 ${n} 未返回 ETag`)
-      parts.push({ partNumber: n, etag: etag.replace(/"/g, '') })
+      const etag = await uploadPartFromBuffer(instance, endpoint, path, uploadId, n, chunk)
+      parts.push({ partNumber: n, etag })
     }
 
     // ③ 完成
-    const completeBody = `<CompleteMultipartUpload>${parts.map(p => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`
-    const completeQuery = `uploadId=${encodeURIComponent(uploadId)}`
-    const completeHash = sha256Hex(completeBody)
-    const { authorization: a3, amzDate: d3 } = signRequest({
-      method: 'POST', endpoint, path, queryString: completeQuery,
-      accessKey: instance.accessKey, secretKey: instance.secretKey,
-      region: 'us-east-1', payloadHash: completeHash,
-    })
-    const completeRes = await fetch(`${endpoint}${path}?${completeQuery}`, {
-      method: 'POST',
-      body: completeBody,
-      headers: {
-        'Host': host,
-        'x-amz-content-sha256': completeHash,
-        'x-amz-date': d3,
-        'Authorization': a3,
-        'Content-Type': 'application/xml',
-      },
-    })
-    if (!completeRes.ok) {
-      const body = await completeRes.text().catch(() => '')
-      throw new Error(`完成 multipart 失败: ${completeRes.status}${body ? ` - ${body.slice(0, 200)}` : ''}`)
-    }
+    await completeMultipartUpload(instance, endpoint, path, uploadId, parts)
   }
   catch (e) {
-    // 中止上传，避免 MinIO 侧残留未完成的 upload（占用空间）
     await abortMultipartUpload(instance, bucket, objectKey, uploadId).catch(() => {})
     throw e
   }
@@ -639,6 +576,290 @@ async function abortMultipartUpload(
       'Authorization': authorization,
     },
   })
+}
+
+// ---------- 提取的 Multipart 独立函数（供 uploadLarge 和流式上传共用） ----------
+
+/**
+ * 初始化 Multipart Upload，返回 uploadId。
+ * POST /{bucket}/{key}?uploads
+ */
+async function initiateMultipartUpload(
+  instance: MinioInstance,
+  endpoint: string,
+  path: string,
+  contentType: string,
+): Promise<string> {
+  const host = new URL(endpoint).host
+  const createQuery = 'uploads='
+  const { authorization, amzDate } = signRequest({
+    method: 'POST', endpoint, path, queryString: createQuery,
+    accessKey: instance.accessKey, secretKey: instance.secretKey,
+    region: 'us-east-1', payloadHash: EMPTY_SHA256,
+  })
+  const createRes = await fetch(`${endpoint}${path}?uploads`, {
+    method: 'POST',
+    headers: {
+      'Host': host,
+      'x-amz-content-sha256': EMPTY_SHA256,
+      'x-amz-date': amzDate,
+      'Authorization': authorization,
+      'Content-Type': contentType,
+    },
+  })
+  if (!createRes.ok) {
+    const body = await createRes.text().catch(() => '')
+    throw new Error(`创建 multipart 失败: ${createRes.status} ${createRes.statusText}${body ? ` - ${body.slice(0, 200)}` : ''}`)
+  }
+  const uploadId = extractXmlTag(await createRes.text(), 'UploadId')
+  if (!uploadId) throw new Error('创建 multipart 失败: 未拿到 UploadId')
+  return uploadId
+}
+
+/**
+ * 上传单个分片（从 Buffer），返回 ETag。
+ * PUT /{bucket}/{key}?partNumber=N&uploadId=X
+ */
+async function uploadPartFromBuffer(
+  instance: MinioInstance,
+  endpoint: string,
+  path: string,
+  uploadId: string,
+  partNumber: number,
+  chunk: Uint8Array,
+): Promise<string> {
+  const host = new URL(endpoint).host
+  const partQuery = `partNumber=${partNumber}&uploadId=${encodeURIComponent(uploadId)}`
+  const { authorization, amzDate } = signRequest({
+    method: 'PUT', endpoint, path, queryString: partQuery,
+    accessKey: instance.accessKey, secretKey: instance.secretKey,
+    region: 'us-east-1', payloadHash: UNSIGNED_PAYLOAD,
+  })
+  const partRes = await fetch(`${endpoint}${path}?${partQuery}`, {
+    method: 'PUT',
+    body: chunk as BodyInit,
+    headers: {
+      'Host': host,
+      'x-amz-content-sha256': UNSIGNED_PAYLOAD,
+      'x-amz-date': amzDate,
+      'Authorization': authorization,
+    },
+  })
+  if (!partRes.ok) {
+    const body = await partRes.text().catch(() => '')
+    throw new Error(`分片 ${partNumber} 上传失败: ${partRes.status}${body ? ` - ${body.slice(0, 200)}` : ''}`)
+  }
+  const etag = partRes.headers.get('etag')
+  if (!etag) throw new Error(`分片 ${partNumber} 未返回 ETag`)
+  return etag.replace(/"/g, '')
+}
+
+/**
+ * 完成 Multipart Upload。
+ * POST /{bucket}/{key}?uploadId=X，body 为 XML（含各 part 的 ETag）。
+ */
+async function completeMultipartUpload(
+  instance: MinioInstance,
+  endpoint: string,
+  path: string,
+  uploadId: string,
+  parts: { partNumber: number, etag: string }[],
+): Promise<void> {
+  const host = new URL(endpoint).host
+  const completeBody = `<CompleteMultipartUpload>${parts.map(p => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`
+  const completeQuery = `uploadId=${encodeURIComponent(uploadId)}`
+  const completeHash = sha256Hex(completeBody)
+  const { authorization, amzDate } = signRequest({
+    method: 'POST', endpoint, path, queryString: completeQuery,
+    accessKey: instance.accessKey, secretKey: instance.secretKey,
+    region: 'us-east-1', payloadHash: completeHash,
+  })
+  const completeRes = await fetch(`${endpoint}${path}?${completeQuery}`, {
+    method: 'POST',
+    body: completeBody,
+    headers: {
+      'Host': host,
+      'x-amz-content-sha256': completeHash,
+      'x-amz-date': amzDate,
+      'Authorization': authorization,
+      'Content-Type': 'application/xml',
+    },
+  })
+  if (!completeRes.ok) {
+    const body = await completeRes.text().catch(() => '')
+    throw new Error(`完成 multipart 失败: ${completeRes.status}${body ? ` - ${body.slice(0, 200)}` : ''}`)
+  }
+}
+
+// ---------- 流式上传（实例间同步用，不落盘） ----------
+
+/**
+ * 从 Web ReadableStream 上传对象到目标实例。
+ *
+ * 小文件（size < MULTIPART_THRESHOLD）走单次预签名 PUT，
+ * 大文件走 Multipart Upload（流式分片）。
+ */
+export async function uploadFromStream(
+  instance: MinioInstance,
+  bucket: string,
+  objectKey: string,
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+  contentType: string,
+): Promise<void> {
+  if (size < MULTIPART_THRESHOLD) {
+    await uploadSmallFromStream(instance, bucket, objectKey, stream, size, contentType)
+  } else {
+    await uploadLargeFromStream(instance, bucket, objectKey, stream, size, contentType)
+  }
+}
+
+/** 小文件流式 PUT：Web ReadableStream 直接作为 fetch body */
+async function uploadSmallFromStream(
+  instance: MinioInstance,
+  bucket: string,
+  objectKey: string,
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+  contentType: string,
+): Promise<void> {
+  const presignedUrl = presignPutUrl({
+    endpoint: instance.endpoint,
+    bucket,
+    objectKey,
+    accessKey: instance.accessKey,
+    secretKey: instance.secretKey,
+    region: 'us-east-1',
+    expiresIn: 3600,
+  })
+
+  // Node 18+ undici fetch 要求 body 为 ReadableStream 时设置 duplex: 'half'
+  // TS 的 RequestInit 未包含此字段，用精确断言补充
+  const response = await fetch(presignedUrl, {
+    method: 'PUT',
+    body: stream,
+    duplex: 'half',
+    headers: {
+      'Content-Type': contentType,
+      'Content-Length': String(size),
+    },
+  } as RequestInit & { duplex: 'half' })
+
+  if (!response.ok) {
+    const body = await response.text().catch(() => '')
+    throw new Error(`上传失败: ${response.status} ${response.statusText}${body ? ` - ${body.slice(0, 200)}` : ''}`)
+  }
+}
+
+/** 大文件流式 Multipart：streamToParts 切分后逐片 uploadPartFromBuffer */
+async function uploadLargeFromStream(
+  instance: MinioInstance,
+  bucket: string,
+  objectKey: string,
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+  contentType: string,
+): Promise<void> {
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const encodedKey = encodeObjectKey(objectKey)
+  const path = `/${bucket}/${encodedKey}`
+
+  const uploadId = await initiateMultipartUpload(instance, endpoint, path, contentType)
+  const parts: { partNumber: number, etag: string }[] = []
+  const partCount = Math.ceil(size / PART_SIZE)
+
+  try {
+    let partNumber = 1
+    for await (const chunk of streamToParts(stream, PART_SIZE)) {
+      const etag = await uploadPartFromBuffer(instance, endpoint, path, uploadId, partNumber, chunk)
+      parts.push({ partNumber, etag })
+      partNumber++
+    }
+
+    if (parts.length === 0) throw new Error('流式上传失败: 未读取到任何数据')
+    if (parts.length !== partCount) throw new Error(`分片数不匹配: 预期 ${partCount}，实际 ${parts.length}`)
+
+    await completeMultipartUpload(instance, endpoint, path, uploadId, parts)
+  } catch (e) {
+    await abortMultipartUpload(instance, bucket, objectKey, uploadId).catch(() => {})
+    throw e
+  }
+}
+
+/** 从 Web ReadableStream 按 partSize 切分，yield 每个 part 的 Buffer */
+async function* streamToParts(
+  stream: ReadableStream<Uint8Array>,
+  partSize: number,
+): AsyncGenerator<Buffer> {
+  const reader = stream.getReader()
+  let chunks: Buffer[] = []
+  let bufferSize = 0
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+
+      chunks.push(Buffer.from(value))
+      bufferSize += value.byteLength
+
+      while (bufferSize >= partSize) {
+        const combined = Buffer.concat(chunks)
+        const part = combined.subarray(0, partSize)
+        const remainder = combined.subarray(partSize)
+        chunks = remainder.length > 0 ? [remainder] : []
+        bufferSize = remainder.length
+        yield part
+      }
+    }
+    if (bufferSize > 0) yield Buffer.concat(chunks)
+  } finally {
+    reader.releaseLock()
+  }
+}
+
+/** 获取对象元数据（S3 HEAD 请求），404 或错误返回 null */
+export async function headObject(
+  instance: MinioInstance,
+  bucket: string,
+  objectKey: string,
+): Promise<{ size: number, contentType: string } | null> {
+  const endpoint = instance.endpoint.replace(/\/+$/, '')
+  const host = new URL(endpoint).host
+  const encodedKey = encodeObjectKey(objectKey)
+  const path = `/${bucket}/${encodedKey}`
+  const payloadHash = createHash('sha256').update('').digest('hex')
+
+  const { authorization, amzDate } = signRequest({
+    method: 'HEAD', endpoint, path, queryString: '',
+    accessKey: instance.accessKey, secretKey: instance.secretKey,
+    region: 'us-east-1', payloadHash,
+  })
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30000)
+
+  try {
+    const res = await fetch(`${endpoint}${path}`, {
+      method: 'HEAD',
+      headers: {
+        'Host': host,
+        'x-amz-content-sha256': payloadHash,
+        'x-amz-date': amzDate,
+        'Authorization': authorization,
+      },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    if (res.status === 404 || !res.ok) return null
+    return {
+      size: parseInt(res.headers.get('content-length') || '0', 10),
+      contentType: res.headers.get('content-type') || 'application/octet-stream',
+    }
+  } catch {
+    clearTimeout(timer)
+    return null
+  }
 }
 
 // ---------- 辅助函数 ----------

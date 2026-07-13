@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import ConfirmDialog from '~/components/ConfirmDialog.vue'
 import BrowserUploadModal from '~/components/BrowserUploadModal.vue'
+// useSync 在 browser 页实例化，通过 props 传入 SyncTargetModal
+const sync = useSync()
 
 // ---------- 类型定义（与后端对齐） ----------
 interface MinioInstance {
@@ -523,7 +525,7 @@ async function downloadSelected() {
       catch {}
     }
     console.error('[download-batch] 下载失败:', errMsg, e)
-    toast.add({ title: '下载失败', description: errMsg, color: 'error', timeout: 10000 })
+    toast.add({ title: '下载失败', description: errMsg, color: 'error' })
   }
   finally {
     downloading.value = false
@@ -725,6 +727,10 @@ watch([bucketList, selectedBucket], () => {
 
 // ---------- 上传对话框 ----------
 const showUploadModal = ref(false)
+const showSyncModal = ref(false)
+const syncTaskActive = computed(() => sync.taskActive.value)
+const syncCompletedCount = computed(() => sync.totalCompleted.value)
+const syncTotalCount = computed(() => sync.totalCount.value)
 
 // 页面标题
 useHead({ title: '对象浏览 · miniops' })
@@ -748,7 +754,7 @@ useHead({ title: '对象浏览 · miniops' })
         placeholder="选择一个已启用的实例"
         class="w-full max-w-md"
       >
-        <template #label>
+        <template #default>
           <span v-if="selectedInstance" class="truncate">{{ selectedInstance.name }} ({{ selectedInstance.endpoint }})</span>
           <span v-else class="text-muted">选择一个已启用的实例</span>
         </template>
@@ -771,7 +777,7 @@ useHead({ title: '对象浏览 · miniops' })
           placeholder="选择 bucket"
           class="w-full max-w-md"
         >
-          <template #label>
+          <template #default>
             <span v-if="selectedBucket" class="font-mono truncate">{{ selectedBucket }}</span>
             <span v-else class="text-muted">选择 bucket</span>
           </template>
@@ -864,7 +870,17 @@ useHead({ title: '对象浏览 · miniops' })
           icon="i-lucide-upload"
           label="上传"
           :disabled="!selectedInstanceId || !selectedBucket"
-          @click="showUploadModal = true"
+          @click="showUploadModal = true; undefined"
+        />
+        <NuxtButton
+          v-if="selectedCount > 0"
+          size="sm"
+          color="primary"
+          variant="outline"
+          icon="i-lucide-refresh-cw"
+          label="同步到..."
+          :disabled="syncTaskActive"
+          @click="showSyncModal = true; undefined"
         />
         <NuxtButton
           v-if="selectedCount > 0"
@@ -1130,6 +1146,33 @@ useHead({ title: '对象浏览 · miniops' })
       :bucket="selectedBucket"
       :prefix="currentPrefix"
       @complete="loadObjects()"
+    />
+
+    <!-- 同步到其他实例对话框 -->
+    <SyncTargetModal
+      v-model:open="showSyncModal"
+      :source-instance-id="selectedInstanceId"
+      :source-instance-name="selectedInstance?.name ?? ''"
+      :source-endpoint="selectedInstance?.endpoint ?? ''"
+      :source-bucket="selectedBucket"
+      :source-prefix="currentPrefix"
+      :selected-keys="selectedKeys"
+      :selected-prefixes="selectedPrefixes"
+      :sync="sync"
+      @complete="loadObjects()"
+    />
+
+    <!-- 悬浮进度指示器 -->
+    <SyncFloatingIndicator
+      v-if="syncTaskActive && !showSyncModal && sync.modalPhase.value !== 'select'"
+      :is-running="sync.isRunning.value"
+      :is-scanning="sync.isScanning.value"
+      :scanned-count="sync.scannedCount.value"
+      :task-summary="sync.taskSummary.value"
+      :completed-count="syncCompletedCount"
+      :total-count="syncTotalCount"
+      @reopen="showSyncModal = true"
+      @close="sync.reset()"
     />
   </div>
 </template>

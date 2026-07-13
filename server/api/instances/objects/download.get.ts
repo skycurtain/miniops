@@ -53,7 +53,7 @@ export default defineEventHandler(async (event) => {
 
   // 透传响应头
   const contentType = response.headers.get('content-type') || 'application/octet-stream'
-  const contentLength = response.headers.get('content-length')
+  const contentLength = response.headers.get('content-length') ?? undefined
   const lastModified = response.headers.get('last-modified')
   const etag = response.headers.get('etag')
   const contentRange = response.headers.get('content-range')
@@ -68,7 +68,7 @@ export default defineEventHandler(async (event) => {
   } else {
     setResponseHeader(event, 'Content-Disposition', `attachment; filename="${encodeURIComponent(filename)}"`)
   }
-  if (contentLength) setResponseHeader(event, 'Content-Length', contentLength)
+  if (contentLength) setResponseHeader(event, 'Content-Length', Number(contentLength))
   if (lastModified) setResponseHeader(event, 'Last-Modified', lastModified)
   if (etag) setResponseHeader(event, 'ETag', etag)
   // Range 请求相关头透传（视频预览必需）

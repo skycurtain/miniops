@@ -51,15 +51,18 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, statusMessage: '选中的目标没有启用的实例' })
   }
 
-  // 校验源不在目标中
-  if (body.targets.instanceIds.includes(body.source.instanceId)) {
-    throw createError({ statusCode: 400, statusMessage: '源实例不能作为同步目标' })
-  }
-
   // 校验所有目标实例有 bucket
   for (const inst of resolvedMap.values()) {
     if (!body.targets.instanceBuckets[inst.id]) {
       throw createError({ statusCode: 400, statusMessage: '实例 ' + inst.name + ' 未指定 bucket' })
+    }
+  }
+
+  // 校验：源实例作为目标时，目标 bucket 不能等于源 bucket
+  if (body.targets.instanceIds.includes(body.source.instanceId)) {
+    const targetBucket = body.targets.instanceBuckets[body.source.instanceId]
+    if (targetBucket === body.source.bucket) {
+      throw createError({ statusCode: 400, statusMessage: '源实例的目标 bucket 不能与源 bucket 相同' })
     }
   }
 

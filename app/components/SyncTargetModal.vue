@@ -49,16 +49,16 @@ function toggleInstance(inst: MinioInstance) {
   sync.targetInstanceIds.value = set
 }
 function isGroupAllSelected(g: InstanceGroup) {
-  const en = g.instances.filter(i => i.enabled && i.id !== props.sourceInstanceId)
+  const en = g.instances.filter(i => i.enabled)
   return en.length > 0 && en.every(i => isInstanceSelected(i))
 }
 function isGroupPartialSelected(g: InstanceGroup) {
-  const en = g.instances.filter(i => i.enabled && i.id !== props.sourceInstanceId)
+  const en = g.instances.filter(i => i.enabled)
   return en.some(i => isInstanceSelected(i)) && !isGroupAllSelected(g)
 }
 function toggleGroup(g: InstanceGroup) {
   const set = new Set(sync.targetInstanceIds.value)
-  const en = g.instances.filter(i => i.enabled && i.id !== props.sourceInstanceId)
+  const en = g.instances.filter(i => i.enabled)
   if (isGroupAllSelected(g)) { for (const i of en) set.delete(i.id) } else { for (const i of en) set.add(i.id) }
   sync.targetInstanceIds.value = set
 }
@@ -164,7 +164,7 @@ watch(() => props.open, (val) => {
           <template v-for="g in groups" :key="g.id">
             <div class="rounded-md border border-default mb-2">
               <div class="flex items-center gap-3 p-2.5">
-                <NuxtCheckbox :model-value="isGroupAllSelected(g)" :indeterminate="isGroupPartialSelected(g)" :disabled="!g.instances.filter(i => i.enabled && !isSourceInstance(i)).length" @update:model-value="toggleGroup(g)" />
+                <NuxtCheckbox :model-value="isGroupAllSelected(g)" :indeterminate="isGroupPartialSelected(g)" :disabled="!g.instances.filter(i => i.enabled).length" @update:model-value="toggleGroup(g)" />
                 <button class="flex items-center gap-2 flex-1 text-left" @click="expanded[g.id] = !expanded[g.id]">
                   <NuxtIcon :name="expanded[g.id] ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'" class="size-4 text-muted" />
                   <NuxtIcon name="i-lucide-folder" class="size-4 text-primary" />
@@ -175,20 +175,20 @@ watch(() => props.open, (val) => {
                 </div>
               </div>
               <div v-if="expanded[g.id]" class="border-t border-default">
-                <div v-for="inst in g.instances" :key="inst.id" class="flex items-center gap-3 px-5 py-1.5 hover:bg-elevated" :class="{ 'opacity-50': !inst.enabled || isSourceInstance(inst) }">
-                  <NuxtCheckbox :model-value="isInstanceSelected(inst)" :disabled="!inst.enabled || isSourceInstance(inst)" @update:model-value="toggleInstance(inst)" />
+                <div v-for="inst in g.instances" :key="inst.id" class="flex items-center gap-3 px-5 py-1.5 hover:bg-elevated" :class="{ 'opacity-50': !inst.enabled }">
+                  <NuxtCheckbox :model-value="isInstanceSelected(inst)" :disabled="!inst.enabled" @update:model-value="toggleInstance(inst)" />
                   <NuxtIcon name="i-lucide-server" class="size-4 text-muted" />
                   <span class="text-sm">{{ inst.name }}</span>
                   <NuxtBadge v-if="isSourceInstance(inst)" color="warning" variant="soft" size="sm">源</NuxtBadge>
                   <NuxtBadge v-else-if="!inst.enabled" color="neutral" variant="outline" size="sm">禁用</NuxtBadge>
                   <div class="flex-1" />
-                  <div v-if="isInstanceSelected(inst) && inst.enabled && !isSourceInstance(inst)" class="flex items-center gap-1">
+                  <div v-if="isInstanceSelected(inst) && inst.enabled" class="flex items-center gap-1">
                     <NuxtTooltip v-if="sync.getInstanceBucketOptions(inst).error" :text="sync.getInstanceBucketOptions(inst).error">
                       <NuxtIcon name="i-lucide-triangle-alert" class="size-4 text-warning" />
                     </NuxtTooltip>
                     <NuxtIcon v-if="sync.getInstanceBucketOptions(inst).loading" name="i-lucide-loader-circle" class="size-4 animate-spin text-muted" />
                     <NuxtInput v-else-if="sync.getInstanceBucketOptions(inst).error" :model-value="sync.getInstanceBucket(inst)" placeholder="输入 bucket" class="w-28" @update:model-value="(val: string) => sync.setInstanceBucket(inst.id, val)" />
-                    <NuxtSelectMenu v-else :model-value="sync.getInstanceBucket(inst)" :items="sync.getInstanceBucketOptions(inst).buckets.map(b => ({ label: b, value: b }))" value-key="value" placeholder="bucket" class="w-28" @update:model-value="(val: string) => sync.setInstanceBucket(inst.id, val)" />
+                    <NuxtSelectMenu v-else :model-value="sync.getInstanceBucket(inst)" :items="sync.getInstanceBucketOptions(inst).buckets.map(b => ({ label: isSourceInstance(inst) && b === props.sourceBucket ? b + '（源）' : b, value: b, disabled: isSourceInstance(inst) && b === props.sourceBucket }))" value-key="value" placeholder="bucket" class="w-28" @update:model-value="(val: string) => sync.setInstanceBucket(inst.id, val)" />
                   </div>
                 </div>
               </div>

@@ -235,10 +235,13 @@ export function useSync() {
       return
     }
 
-    // 校验源不在目标中
+    // 校验：源实例作为目标时，目标 bucket 不能等于源 bucket
     if (targetInstanceIds.value.has(source.instanceId)) {
-      toast.add({ title: '源实例不能作为同步目标', color: 'warning' })
-      return
+      const targetBucket = targetBuckets.value[source.instanceId]
+      if (targetBucket === source.bucket) {
+        toast.add({ title: '源实例的目标 bucket 不能与源 bucket 相同', color: 'warning' })
+        return
+      }
     }
 
     // 凭据提醒

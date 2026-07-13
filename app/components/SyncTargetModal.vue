@@ -120,10 +120,13 @@ function fileIcon(ct: string): string {
   return 'i-lucide-file'
 }
 
-// Modal 打开时重置到 select 阶段
+// Modal 打开时：如果处于 select 阶段（非进行中），清理上次的目标选择
 watch(() => props.open, (val) => {
   if (val && sync.modalPhase.value === 'select') {
-    // 首次打开或重置后打开，保持 select 阶段
+    sync.targetInstanceIds.value = new Set()
+    sync.targetBuckets.value = {}
+    sync.targetBucketOptions.value = {}
+    sync.targetPrefix.value = ''
   }
 })
 </script>

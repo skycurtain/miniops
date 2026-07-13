@@ -10,26 +10,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   reopen: []
-  close: []
 }>()
-
-const showSuccess = ref(false)
-let successTimer: ReturnType<typeof setTimeout> | null = null
-
-// 完成且全部成功时自动淡出
-watch(() => props.taskSummary, (summary) => {
-  if (summary && summary.failed === 0) {
-    showSuccess.value = true
-    successTimer = setTimeout(() => {
-      showSuccess.value = false
-      emit('close')
-    }, 3000)
-  }
-})
-
-onUnmounted(() => {
-  if (successTimer) clearTimeout(successTimer)
-})
 
 const percent = computed(() => {
   if (props.taskSummary) return 100
@@ -66,9 +47,6 @@ const percent = computed(() => {
       <div v-else-if="taskSummary" class="flex items-center gap-2">
         <NuxtIcon name="i-lucide-triangle-alert" class="size-4 text-warning shrink-0" />
         <span class="text-sm font-medium text-warning">完成 {{ taskSummary.success }}/{{ taskSummary.total }}，{{ taskSummary.failed }} 失败</span>
-        <button class="ml-1 text-muted hover:text-error shrink-0" @click.stop="emit('close')">
-          <NuxtIcon name="i-lucide-x" class="size-3.5" />
-        </button>
       </div>
     </div>
   </div>

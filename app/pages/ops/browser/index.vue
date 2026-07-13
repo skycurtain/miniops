@@ -1179,7 +1179,6 @@ useHead({ title: '对象浏览 · miniops' })
       :completed-count="syncCompletedCount"
       :total-count="syncTotalCount"
       @reopen="showSyncModal = true"
-      @close="sync.reset()"
     />
   </div>
 </template>

@@ -233,7 +233,7 @@
 | T7-3 | 点击浮窗 | 重新打开 Modal（回到进度视图） | |
 | T7-4 | 全部成功且不点浮窗 | 同步完成后**自动弹出 Modal**显示结果汇总（done 阶段）；浮窗因 Modal 打开而卸载，不会触发自动淡出 | |
 | T7-5 | 有失败时 | 浮窗黄色警告，**不自动淡出**；同步完成后同样自动弹出 Modal 显示结果 | |
-| T7-6 | 有失败时手动关浮窗 | 点浮窗 ✕ 关闭 -> `sync.reset()` 清空状态；之后同步完成不再自动弹 Modal（taskSummary 已被 reset 清空） | |
+| T7-6 | 有失败时手动关浮窗 | 不适用：同步完成时 Modal 自动弹出，浮窗随之卸载，✕ 按钮不会被渲染，用户无法点击 | |
 
 ---
 
@@ -292,7 +292,7 @@
 |---|---|---|---|
 | P1 | SSE 进度实时性 | `useSync.ts` `subscribeSSE` progress 事件处理 | 文件行状态从转圈到对勾/叉是否平滑，有无卡在转圈不动 |
 | P2 | 实例折叠展开 | `SyncTargetModal.vue` `watch(modalPhase)` | 提交后实例行默认展开是否生效；手动折叠/再展开是否正常 |
-| P3 | 浮窗自动淡出 | `SyncFloatingIndicator.vue` `watch(taskSummary)` | 全部成功 3 秒淡出--若卡住不消失，说明 `taskSummary.failed === 0` 判断或 timer 有问题 |
+| P3 | 浮窗显示与卸载 | `SyncFloatingIndicator.vue` + `browser/index.vue` watch | 同步完成时 Modal 自动弹出，浮窗随之卸载；浮窗不显示 ✕ 按钮和自动淡出逻辑已移除 |
 | P4 | 同步完成后列表刷新 | `browser/index.vue` `@complete="loadObjects()"` | 同步完成时（SSE complete 事件）browser 对象列表是否重新加载 |
 | P5 | Modal 反复打开状态清理 | `useSync.ts` `reset()` | 同步完成后再次打开 Modal，是否彻底回到 select 阶段 |
 | P6 | 同前缀多选 + 文件夹递归 | browser 页 `selectedKeys`/`selectedPrefixes` | 同前缀下同时勾选对象和文件夹前缀，Modal 源区计数是否正确，扫描展开是否正常 |
@@ -320,7 +320,7 @@ docker run --rm --entrypoint sh minio/mc:latest -c 'mc alias set local http://ho
 | T4 | 多文件 + 文件夹递归 | ☑ 通过 | 含 &#39; XML 转义修复 |
 | T5 | 大文件 multipart | ☑ 通过 | |
 | T6 | 有失败的同步 | — 跳过 | 正常操作下无法填不存在的 bucket，测试前提不成立 |
-| T7 | 悬浮指示器 | ☐ 通过 ☐ 失败 | |
+| T7 | 悬浮指示器 | ☑ 通过 | 移除冗余的 ✕ 按钮和自动淡出逻辑 |
 | T8 | Modal 反复打开 | ☐ 通过 ☐ 失败 | |
 | T9 | 凭据无效实例 | ☐ 通过 ☐ 失败 | |
 

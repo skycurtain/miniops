@@ -1,5 +1,7 @@
 import { promises as fs } from 'node:fs'
+import { createWriteStream } from 'node:fs'
 import { resolve, join, dirname } from 'node:path'
+import { pipeline } from 'node:stream/promises'
 import { inferContentType, sanitizeObjectKey } from './minio'
 import type { StoredFile } from '../types'
 
@@ -57,6 +59,46 @@ export async function storeUpload(rawName: string, data: Buffer, objectKeyOverri
   return stored
 }
 
+/**
+ * 流式暂存一个上传文件。
+ *
+ * 与 storeUpload 功能相同，但接受 ReadableStream 而非 Buffer，
+ * 避免大文件全量加载进内存。用 pipeline 流式落盘。
+ */
+export async function storeUploadFromStream(
+  rawName: string,
+  stream: ReadableStream<Uint8Array>,
+  size: number,
+  contentTypeOverride?: string,
+  objectKeyOverride?: string,
+): Promise<StoredFile> {
+  const id = `uf-${crypto.randomUUID()}`
+  const safeName = sanitizeFileName(rawName)
+  const objectKey = objectKeyOverride ? sanitizeObjectKey(objectKeyOverride) : sanitizeObjectKey(rawName)
+  const contentType = contentTypeOverride || inferContentType(rawName)
+  const dir = join(UPLOAD_DIR, id)
+  const storedPath = join(id, safeName)
+  const absPath = join(UPLOAD_DIR, storedPath)
+
+  await fs.mkdir(dir, { recursive: true })
+
+  // 流式落盘：ReadableStream -> Node WritableStream
+  const nodeStream = stream as unknown as NodeJS.ReadableStream
+  await pipeline(nodeStream, createWriteStream(absPath))
+
+  const stored: StoredFile = {
+    id,
+    name: rawName,
+    objectKey,
+    size,
+    contentType,
+    storedPath,
+    uploadedAt: new Date().toISOString(),
+  }
+  fileRegistry.set(id, stored)
+  return stored
+}
+
 /** 查询暂存文件元数据 */
 export function getStoredFile(id: string): StoredFile | null {
   return fileRegistry.get(id) ?? null
@@ -72,7 +114,7 @@ export async function deleteStoredFile(id: string): Promise<void> {
     const absPath = join(UPLOAD_DIR, stored.storedPath)
     await fs.rm(absPath, { force: true }).catch(() => {})
     // 删除空目录
-    await fs.rmdir(dirname(absPath), { recursive: false }).catch(() => {})
+    await fs.rm(dirname(absPath), { recursive: false, force: true }).catch(() => {})
     fileRegistry.delete(id)
   }
   else {

@@ -70,6 +70,9 @@ let eventSource: EventSource | null = null
 /** 当前正在进行的暂存 XHR，用于关闭时取消 */
 let stagingXhrs: XMLHttpRequest[] = []
 
+/** 取消标志：staging 阶段用户点「终止」时设为 true，for 循环检查后提前退出 */
+let cancelled = false
+
 // ---------- 工具函数 ----------
 
 function formatSize(bytes: number): string {
@@ -182,8 +185,17 @@ const folderExpanded = ref<Record<string, boolean>>({})
 const totalCount = computed(() => items.value.length)
 const pendingCount = computed(() => items.value.filter(i => i.status === 'pending').length)
 
-/** 整体进度（staging + dispatching 阶段） */
-const progressStats = computed(() => {
+/** 暂存阶段进度：staged/dispatching/success/failed 都算暂存完成 */
+const stagingStats = computed(() => {
+  const total = items.value.length
+  const done = items.value.filter(i =>
+    i.status === 'staged' || i.status === 'dispatching' || i.status === 'success' || i.status === 'failed',
+  ).length
+  return { done, total }
+})
+
+/** 分发阶段进度：只有 success/failed 算分发完成 */
+const dispatchingStats = computed(() => {
   const total = items.value.length
   const done = items.value.filter(i => i.status === 'success' || i.status === 'failed').length
   return { done, total }
@@ -192,13 +204,19 @@ const progressStats = computed(() => {
 /** 文件夹聚合的状态图标 */
 function folderStatusIcon(groupItems: UploadItem[]): { icon: string; class: string } | null {
   if (groupItems.some(i => i.status === 'staging' || i.status === 'dispatching')) {
-    return { icon: 'i-lucide-loader-circle', class: 'size-4 animate-spin text-primary shrink-0' }
+    // 有活跃任务时按活跃类型选色：dispatching 优先（info 色），否则 staging（primary 色）
+    const hasDispatching = groupItems.some(i => i.status === 'dispatching')
+    return { icon: 'i-lucide-loader-circle', class: hasDispatching ? 'size-4 animate-spin text-info shrink-0' : 'size-4 animate-spin text-primary shrink-0' }
   }
   if (groupItems.some(i => i.status === 'failed')) {
     return { icon: 'i-lucide-x-circle', class: 'size-4 text-error shrink-0' }
   }
   if (groupItems.every(i => i.status === 'success')) {
     return { icon: 'i-lucide-check-circle', class: 'size-4 text-success shrink-0' }
+  }
+  // 全部 staged（已暂存等待分发）
+  if (groupItems.every(i => i.status === 'staged')) {
+    return { icon: 'i-lucide-clock', class: 'size-4 text-muted shrink-0' }
   }
   return null
 }
@@ -211,9 +229,9 @@ function itemStatusDisplay(item: UploadItem): { icon?: string; class?: string; t
     case 'staging':
       return { icon: 'i-lucide-loader-circle', class: 'size-3.5 animate-spin text-primary shrink-0', text: `${item.progress}%`, textClass: 'text-xs text-muted shrink-0' }
     case 'staged':
-      return { icon: 'i-lucide-loader-circle', class: 'size-3.5 animate-spin text-primary shrink-0' }
+      return { icon: 'i-lucide-clock', class: 'size-3.5 text-muted shrink-0', text: '已暂存', textClass: 'text-xs text-muted shrink-0' }
     case 'dispatching':
-      return { icon: 'i-lucide-loader-circle', class: 'size-3.5 animate-spin text-primary shrink-0', text: '上传中', textClass: 'text-xs text-muted shrink-0' }
+      return { icon: 'i-lucide-loader-circle', class: 'size-3.5 animate-spin text-info shrink-0', text: '上传中', textClass: 'text-xs text-info shrink-0' }
     case 'success':
       return { icon: 'i-lucide-check-circle', class: 'size-3.5 text-success shrink-0' }
     case 'failed':
@@ -257,6 +275,10 @@ async function stageFile(item: UploadItem): Promise<StoredFile> {
       stagingXhrs = stagingXhrs.filter(x => x !== xhr)
       reject(new Error('网络错误'))
     }
+    xhr.onabort = () => {
+      stagingXhrs = stagingXhrs.filter(x => x !== xhr)
+      reject(new Error('已取消'))
+    }
     xhr.open('POST', '/api/uploads')
     xhr.send(form)
   })
@@ -271,6 +293,7 @@ async function startUpload() {
   phase.value = 'staging'
   const toStage = items.value.filter(i => i.status === 'pending')
   for (const item of toStage) {
+    if (cancelled) break
     item.status = 'staging'
     item.progress = 0
     try {
@@ -282,6 +305,19 @@ async function startUpload() {
       item.status = 'failed'
       item.error = e?.message || '暂存失败'
     }
+  }
+
+  // 用户终止：不提交 dispatch，已暂存的标记为 cancelled
+  if (cancelled) {
+    for (const item of items.value) {
+      if (item.status === 'staged' || item.status === 'staging') {
+        item.status = 'failed'
+        item.error = '已取消'
+      }
+    }
+    phase.value = 'done'
+    summary.value = { total: items.value.length, success: 0, failed: items.value.length }
+    return
   }
 
   // 2. 检查是否有成功暂存的文件
@@ -388,26 +424,71 @@ function subscribeSSE(taskId: string) {
 
 // ---------- 对话框关闭 ----------
 
-function onClose() {
-  // staging 阶段：取消未完成的暂存请求
-  if (phase.value === 'staging') {
-    for (const xhr of stagingXhrs) {
-      try { xhr.abort() } catch { /* 忽略 */ }
+/** 终止：staging 阶段可用。abort 当前 XHR + 设取消标志停止后续循环。 */
+function onCancel() {
+  cancelled = true
+  for (const xhr of stagingXhrs) {
+    try { xhr.abort() } catch { /* 忽略 */ }
+  }
+  stagingXhrs = []
+  toast.add({ title: '已终止上传', description: '未上传的文件已取消', color: 'info' })
+}
+
+// ---------- 浮窗指示器（后台运行时） ----------
+
+/** 浮窗是否可见：Modal 关闭 + 任务在进行中或刚完成 */
+const floatingVisible = computed(() => {
+  return !props.open && (phase.value === 'staging' || phase.value === 'dispatching' || (phase.value === 'done' && floatingSummary.value))
+})
+
+/** 浮窗完成后自动淡出的摘要副本 */
+const floatingSummary = ref<{ total: number; success: number; failed: number } | null>(null)
+let floatingTimer: ReturnType<typeof setTimeout> | null = null
+
+// phase 进入 done 时，复制 summary 到 floatingSummary，全部成功则 3s 后自动淡出
+watch(() => phase.value, (val) => {
+  if (val === 'done' && summary.value && !props.open) {
+    floatingSummary.value = summary.value
+    if (summary.value.failed === 0) {
+      floatingTimer = setTimeout(() => {
+        floatingSummary.value = null
+      }, 3000)
     }
-    stagingXhrs = []
   }
+})
 
-  // dispatching 阶段：后端任务继续跑，不中断
-  if (phase.value === 'dispatching') {
-    toast.add({
-      title: '上传任务在后台继续',
-      description: '关闭不会中断，完成后可刷新列表查看',
-      color: 'info',
-    })
+onUnmounted(() => {
+  if (floatingTimer) clearTimeout(floatingTimer)
+})
+
+function reopenModal() {
+  floatingSummary.value = null
+  if (floatingTimer) clearTimeout(floatingTimer)
+  emit('update:open', true)
+}
+
+function closeFloating() {
+  floatingSummary.value = null
+  if (floatingTimer) clearTimeout(floatingTimer)
+}
+
+const floatingPercent = computed(() => {
+  if (floatingSummary.value) return 100
+  if (phase.value === 'staging') {
+    return stagingStats.value.total ? Math.round(stagingStats.value.done / stagingStats.value.total * 100) : 0
   }
+  const done = dispatchingStats.value.done
+  const total = dispatchingStats.value.total
+  return total ? Math.round(done / total * 100) : 0
+})
 
-  eventSource?.close()
-  eventSource = null
+/** 后台运行：关闭 Modal 但不中断任务。staging 阶段 XHR 继续，dispatching 阶段后端继续。 */
+function onBackground() {
+  emit('update:open', false)
+}
+
+/** done 阶段：正常关闭，重置状态。 */
+function onClose() {
   emit('update:open', false)
 }
 
@@ -415,12 +496,16 @@ function onClose() {
 
 watch(() => props.open, (val) => {
   if (val) {
-    items.value = []
-    phase.value = 'select'
-    summary.value = null
-    eventSource?.close()
-    eventSource = null
-    stagingXhrs = []
+    // 仅在 done/select 阶段（非进行中）重置状态；进行中重开（如点浮窗）保留进度
+    if (phase.value === 'done' || phase.value === 'select') {
+      items.value = []
+      phase.value = 'select'
+      summary.value = null
+      cancelled = false
+      eventSource?.close()
+      eventSource = null
+      stagingXhrs = []
+    }
   }
 })
 
@@ -439,6 +524,7 @@ onUnmounted(() => {
     :open="props.open"
     title="上传到对象存储"
     :dismissible="false"
+    :close="phase === 'select' || phase === 'done'"
     :ui="{ content: 'max-w-2xl' }"
     @update:open="(v: boolean) => emit('update:open', v)"
   >
@@ -516,18 +602,37 @@ onUnmounted(() => {
 
         <!-- 上传进度（staging / dispatching / done 阶段） -->
         <div v-if="phase !== 'select'" class="flex flex-col gap-3">
-          <!-- 整体进度条 -->
-          <div v-if="phase !== 'done'" class="flex items-center gap-3">
-            <span class="text-sm text-muted shrink-0">
-              {{ phase === 'staging' ? '正在暂存' : '正在上传' }}...
-            </span>
-            <div class="flex-1 h-2 rounded-full bg-elevated overflow-hidden">
-              <div
-                class="h-full bg-primary transition-all duration-300"
-                :style="{ width: `${progressStats.total ? (progressStats.done / progressStats.total) * 100 : 0}%` }"
-              />
+          <!-- 双阶段进度条 -->
+          <div v-if="phase !== 'done'" class="flex flex-col gap-2">
+            <!-- 阶段 1：暂存 -->
+            <div class="flex items-center gap-3">
+              <span class="text-sm shrink-0 w-16" :class="phase === 'staging' ? 'text-primary font-medium' : (phase === 'dispatching' ? 'text-success' : 'text-muted')">
+                <NuxtIcon v-if="phase === 'dispatching'" name="i-lucide-check-circle" class="size-3.5 inline-block" />
+                暂存
+              </span>
+              <div class="flex-1 h-2 rounded-full bg-elevated overflow-hidden">
+                <div
+                  class="h-full transition-all duration-300"
+                  :class="phase === 'dispatching' ? 'bg-success' : 'bg-primary'"
+                  :style="{ width: `${stagingStats.total ? (stagingStats.done / stagingStats.total) * 100 : 0}%` }"
+                />
+              </div>
+              <span class="text-sm text-muted shrink-0 w-12 text-right">{{ stagingStats.done }}/{{ stagingStats.total }}</span>
             </div>
-            <span class="text-sm text-muted shrink-0 w-12 text-right">{{ progressStats.done }}/{{ progressStats.total }}</span>
+            <!-- 阶段 2：上传 -->
+            <div class="flex items-center gap-3">
+              <span class="text-sm shrink-0 w-16" :class="phase === 'dispatching' ? 'text-primary font-medium' : 'text-muted'">
+                上传
+              </span>
+              <div class="flex-1 h-2 rounded-full bg-elevated overflow-hidden">
+                <div
+                  v-if="phase === 'dispatching'"
+                  class="h-full bg-primary transition-all duration-300"
+                  :style="{ width: `${dispatchingStats.total ? (dispatchingStats.done / dispatchingStats.total) * 100 : 0}%` }"
+                />
+              </div>
+              <span class="text-sm text-muted shrink-0 w-12 text-right">{{ phase === 'dispatching' ? `${dispatchingStats.done}/${dispatchingStats.total}` : '等待中' }}</span>
+            </div>
           </div>
 
           <!-- 文件级状态列表 -->
@@ -594,9 +699,14 @@ onUnmounted(() => {
             @click="startUpload"
           />
         </template>
-        <!-- staging / dispatching 阶段：只显示关闭（带提示） -->
-        <template v-else-if="phase === 'staging' || phase === 'dispatching'">
-          <NuxtButton color="neutral" variant="ghost" label="关闭" @click="onClose" />
+        <!-- staging 阶段：终止 + 后台运行 -->
+        <template v-else-if="phase === 'staging'">
+          <NuxtButton color="error" variant="ghost" icon="i-lucide-x" label="终止" @click="onCancel" />
+          <NuxtButton color="neutral" variant="ghost" icon="i-lucide-arrow-down-to-line" label="后台运行" @click="onBackground" />
+        </template>
+        <!-- dispatching 阶段：后台运行（后端任务不可取消） -->
+        <template v-else-if="phase === 'dispatching'">
+          <NuxtButton color="neutral" variant="ghost" icon="i-lucide-arrow-down-to-line" label="后台运行" @click="onBackground" />
         </template>
         <!-- done 阶段：关闭 -->
         <template v-else>
@@ -605,4 +715,38 @@ onUnmounted(() => {
       </div>
     </template>
   </NuxtModal>
+
+  <!-- 悬浮进度指示器（后台运行时） -->
+  <div
+    v-if="floatingVisible"
+    class="fixed bottom-4 right-4 z-50 cursor-pointer"
+    @click="reopenModal"
+  >
+    <div class="rounded-lg border border-default bg-default shadow-lg p-3 min-w-52 transition-all hover:shadow-xl">
+      <!-- 进行中 -->
+      <div v-if="phase === 'staging' || phase === 'dispatching'" class="flex flex-col gap-1.5">
+        <div class="flex items-center gap-2">
+          <NuxtIcon name="i-lucide-loader-circle" class="size-4 animate-spin text-primary shrink-0" />
+          <span class="text-sm font-medium">
+            {{ phase === 'staging' ? '暂存中' : '上传中' }}
+            {{ phase === 'staging' ? `${stagingStats.done}/${stagingStats.total}` : `${dispatchingStats.done}/${dispatchingStats.total}` }}
+          </span>
+        </div>
+        <NuxtProgress :model-value="floatingPercent" size="sm" />
+      </div>
+      <!-- 全部成功 -->
+      <div v-else-if="floatingSummary && floatingSummary.failed === 0" class="flex items-center gap-2">
+        <NuxtIcon name="i-lucide-check-circle" class="size-4 text-success shrink-0" />
+        <span class="text-sm font-medium text-success">上传完成 {{ floatingSummary.total }}/{{ floatingSummary.total }}</span>
+      </div>
+      <!-- 有失败 -->
+      <div v-else-if="floatingSummary" class="flex items-center gap-2">
+        <NuxtIcon name="i-lucide-triangle-alert" class="size-4 text-warning shrink-0" />
+        <span class="text-sm font-medium text-warning">完成 {{ floatingSummary.success }}/{{ floatingSummary.total }}，{{ floatingSummary.failed }} 失败</span>
+        <button class="ml-1 text-muted hover:text-error shrink-0" @click.stop="closeFloating">
+          <NuxtIcon name="i-lucide-x" class="size-3.5" />
+        </button>
+      </div>
+    </div>
+  </div>
 </template>

@@ -311,7 +311,7 @@ docker run --rm --entrypoint sh minio/mc:latest -c 'mc alias set local http://ho
 
 | 用例 | 名称 | 结果 | 备注 |
 |---|---|---|---|
-| T1 | 基本同步流程 | ☐ 通过 ☐ 失败 | |
+| T1 | 基本同步流程 | ☑ 通过 | |
 | T2 | 源实例禁用 | ☐ 通过 ☐ 失败 | |
 | T3 | 组级批量 bucket | ☐ 通过 ☐ 失败 | |
 | T4 | 多文件 + 文件夹递归 | ☐ 通过 ☐ 失败 | |

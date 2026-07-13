@@ -318,7 +318,7 @@ docker run --rm --entrypoint sh minio/mc:latest -c 'mc alias set local http://ho
 | T2 | 源实例同 bucket 禁用 | ☑ 通过 | |
 | T3 | 组级批量 bucket | ☑ 通过 | |
 | T4 | 多文件 + 文件夹递归 | ☑ 通过 | 含 &#39; XML 转义修复 |
-| T5 | 大文件 multipart | ☐ 通过 ☐ 失败 | |
+| T5 | 大文件 multipart | ☑ 通过 | |
 | T6 | 有失败的同步 | ☐ 通过 ☐ 失败 | |
 | T7 | 悬浮指示器 | ☐ 通过 ☐ 失败 | |
 | T8 | Modal 反复打开 | ☐ 通过 ☐ 失败 | |

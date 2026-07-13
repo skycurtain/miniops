@@ -1071,7 +1071,7 @@ useHead({ title: '对象浏览 · miniops' })
             </div>
 
             <!-- 图片 -->
-            <div v-else-if="previewType === 'image'" class="flex items-center justify-center min-h-[300px]">
+            <div v-else-if="previewType === 'image'" class="flex items-center justify-center min-h-75">
               <img
                 :src="previewUrl"
                 :alt="previewKey"
@@ -1081,7 +1081,7 @@ useHead({ title: '对象浏览 · miniops' })
             </div>
 
             <!-- 视频 -->
-            <div v-else-if="previewType === 'video'" class="flex items-center justify-center min-h-[300px]">
+            <div v-else-if="previewType === 'video'" class="flex items-center justify-center min-h-75">
               <video
                 :src="previewUrl"
                 controls

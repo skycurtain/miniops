@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// 侧边栏导航项（与 DESIGN.md 一致：总览 / 实例 / 运维 > 文件分发）
+// 侧边栏导航项（与 DESIGN.md 一致：总览 / 实例 / 运维 > 对象浏览）
 const navItems = [
   { label: '总览', to: '/', icon: 'i-lucide-layout-dashboard' },
   { label: '实例', to: '/groups', icon: 'i-lucide-server' },
@@ -8,8 +8,8 @@ const navItems = [
     icon: 'i-lucide-wrench',
     defaultOpen: true,
     children: [
-      { label: '文件分发', to: '/ops/dispatch', icon: 'i-lucide-send' },
       { label: '对象浏览', to: '/ops/browser', icon: 'i-lucide-folder-search' },
+      { label: '文件分发', to: '/ops/dispatch', icon: 'i-lucide-send' },
       { label: '批量清理', to: '/ops/cleanup', icon: 'i-lucide-trash-2' },
     ],
   },

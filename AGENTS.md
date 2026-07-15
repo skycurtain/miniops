@@ -12,10 +12,10 @@ miniops 是一个面向 MinIO 的批量运维操作平台。核心功能是将�
 bun install          # 安装依赖
 bun run dev          # 开发模式（http://localhost:3000）
 bun run build        # 生产构建（产物在 .output/）
-bun run .output/server/index.mjs  # 生产启动
+bun run start        # 生产启动
 ```
 
-> **注意**：`bun run dev` 触发的是 `nuxt dev`，运行时为 Node 而非 Bun。代码中不要使用 `Bun.file()` 等 Bun 专有 API，必须用 `node:fs` 等 Node 标准库保证兼容。
+> **运行时说明**：dev 命令通过 `bunx --bun nuxt dev` 强制使用 Bun 运行时；生产构建使用 Nitro 的 `bun` preset（`nuxt.config.ts` 中 `nitro: { preset: 'bun' }`），产物用 `Bun.serve()` 启动。代码当前使用 `node:fs`、`node:crypto` 等 Node 标准库，Bun 完全兼容；后续可评估改用 Bun 专有 API。
 
 没有测试框架。验证方式：启动 dev server + 本地 MinIO 容器，手动端到端测试。
 

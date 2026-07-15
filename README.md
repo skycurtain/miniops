@@ -21,7 +21,7 @@
 |---|---|
 | 框架 | Nuxt 4 + Vue 3（全栈模式） |
 | UI | Nuxt UI v4 + Tailwind CSS v4（组件统一 `Nuxt` 前缀） |
-| 运行时 | Bun（推荐）/ Node.js 18+ |
+| 运行时 | Bun |
 | 校验 | valibot |
 | MinIO 操作 | 手写 AWS SigV4（`node:crypto` + 原生 `fetch`，零 SDK 依赖） |
 
@@ -38,8 +38,10 @@ bun run dev
 bun run build
 
 # 生产启动
-bun run .output/server/index.mjs
+bun run start
 ```
+
+> **运行时说明**：dev 命令通过 `bunx --bun nuxt dev` 强制使用 Bun 运行时；生产构建使用 Nitro 的 `bun` preset，产物通过 `bun run .output/server/index.mjs` 启动。代码使用 Node 标准库（`node:fs`、`node:crypto`），Bun 完全兼容。
 
 ## 环境变量
 

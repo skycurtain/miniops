@@ -12,4 +12,7 @@ export default defineNuxtConfig({
     preference: 'light',
     fallback: 'light',
   },
+  nitro: {
+    preset: 'bun',
+  },
 })

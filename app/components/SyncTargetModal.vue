@@ -132,7 +132,7 @@ watch(() => props.open, (val) => {
 </script>
 
 <template>
-  <NuxtModal :open="open" @update:open="emit('update:open', $event)" :ui="{ content: 'sm:max-w-2xl' }">
+  <NuxtModal :open="open" :dismissible="false" :close="sync.modalPhase.value === 'select' || sync.modalPhase.value === 'done'" @update:open="emit('update:open', $event)" :ui="{ content: 'sm:max-w-2xl' }">
     <template #header>
       <span class="font-semibold text-highlighted">同步到其他实例</span>
     </template>

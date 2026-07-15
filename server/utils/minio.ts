@@ -2,12 +2,46 @@ import type { MinioInstance, ListObjectsResult, DeleteObjectsResult, ObjectInfo 
 import { createHash, createHmac } from 'node:crypto'
 import { statSync } from 'node:fs'
 import { open, readFile } from 'node:fs/promises'
+import { XMLParser } from 'fast-xml-parser'
+import Builder from 'fast-xml-builder'
 
 /**
  * MinIO 操作封装
  *
  * Phase 2 仅实现连通性测试；Phase 3 会补充 uploadJson 等。
  */
+
+/** S3 XML 解析器单例 */
+const xmlParser = new XMLParser({
+  ignoreAttributes: false,
+  // S3 XML 单元素时不返回数组，用 isArray 钩子强制转为数组
+  isArray: (name: string) => [
+    'Contents', 'CommonPrefixes', 'Bucket', 'Deleted', 'Error', 'Part',
+  ].includes(name),
+  // fast-xml-parser v5 默认不反转义数字字符引用（&#34; &#39; 等），
+  // 用 tagValueProcessor 统一反转义，避免含特殊字符的 Key/ETag 等字段出错
+  tagValueProcessor: (_tagName: string, val: string) => unescapeXmlEntities(val),
+})
+
+/** XML 实体反转义（含数字字符引用） */
+function unescapeXmlEntities(s: string): string {
+  if (typeof s !== 'string') return s
+  return s
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
+    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)))
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+}
+
+/** S3 XML 构建器单例（紧凑单行输出，省传输字节） */
+const xmlBuilder = new Builder({
+  format: false,
+  ignoreAttributes: false,
+  suppressEmptyNode: true,
+})
 
 /** 连通性测试结果 */
 export interface ConnectivityResult {
@@ -411,14 +445,10 @@ export async function listBucketsBatch(instances: MinioInstance[]): Promise<List
  * </ListBucketsResult>
  */
 function parseBucketNames(xml: string): string[] {
-  const names: string[] = []
-  // 用正则提取所有 <Name>...</Name>（在 Bucket 上下文中）
-  const regex = /<Bucket>\s*<Name>([^<]+)<\/Name>/g
-  let match: RegExpExecArray | null
-  while ((match = regex.exec(xml)) !== null) {
-    if (match[1]) names.push(match[1])
-  }
-  return names
+  const parsed = xmlParser.parse(xml)
+  const buckets = parsed?.ListAllMyBucketsResult?.Buckets?.Bucket
+  if (!buckets) return []
+  return buckets.map((b: any) => b.Name).filter(Boolean)
 }
 
 // ---------- 通用对象上传（V2：小文件单次 PUT + 大文件 multipart） ----------
@@ -666,7 +696,11 @@ async function completeMultipartUpload(
   parts: { partNumber: number, etag: string }[],
 ): Promise<void> {
   const host = new URL(endpoint).host
-  const completeBody = `<CompleteMultipartUpload>${parts.map(p => `<Part><PartNumber>${p.partNumber}</PartNumber><ETag>${p.etag}</ETag></Part>`).join('')}</CompleteMultipartUpload>`
+  const completeBody = xmlBuilder.build({
+    CompleteMultipartUpload: {
+      Part: parts.map(p => ({ PartNumber: String(p.partNumber), ETag: p.etag })),
+    },
+  })
   const completeQuery = `uploadId=${encodeURIComponent(uploadId)}`
   const completeHash = sha256Hex(completeBody)
   const { authorization, amzDate } = signRequest({
@@ -869,10 +903,21 @@ function sha256Hex(data: string): string {
   return createHash('sha256').update(data).digest('hex')
 }
 
-/** 从 XML 响应中提取单个标签的文本内容 */
+/** 从 XML 响应中提取单个标签的文本内容（仅用于 InitiateMultipartUpload 的 UploadId） */
 function extractXmlTag(xml: string, tag: string): string | null {
-  const m = xml.match(new RegExp(`<${tag}>([^<]*)</${tag}>`))
-  return m?.[1] ?? null
+  const parsed = xmlParser.parse(xml)
+  // 递归查找第一个匹配的 tag
+  function find(node: any): string | null {
+    if (node == null) return null
+    if (typeof node !== 'object') return null
+    if (tag in node) return String(node[tag])
+    for (const v of Object.values(node)) {
+      const found = find(v)
+      if (found !== null) return found
+    }
+    return null
+  }
+  return find(parsed)
 }
 
 /** MIME 类型推断表 */
@@ -1037,38 +1082,26 @@ export async function listObjects(
  * - <NextContinuationToken>...</NextContinuationToken>
  */
 function parseListObjectsXml(xml: string): ListObjectsResult {
-  const objects: ObjectInfo[] = []
-  const commonPrefixes: string[] = []
+  const parsed = xmlParser.parse(xml)
+  const root = parsed?.ListBucketResult
 
-  // 提取所有 <Contents>...</Contents> 块
-  const contentsRegex = /<Contents>([\s\S]*?)<\/Contents>/g
-  let match: RegExpExecArray | null
-  while ((match = contentsRegex.exec(xml)) !== null) {
-    const block = match[1] || ''
-    const key = extractXmlTag(block, 'Key')
-    const sizeStr = extractXmlTag(block, 'Size')
-    const lastModified = extractXmlTag(block, 'LastModified')
-    const etag = extractXmlTag(block, 'ETag')
-    if (key) {
-      objects.push({
-        key: unescapeXml(key),
-        size: sizeStr ? parseInt(sizeStr, 10) : 0,
-        lastModified: lastModified || '',
-        etag: etag?.replace(/"/g, ''),
-      })
-    }
+  const objects: ObjectInfo[] = (root?.Contents ?? []).map((c: any) => ({
+    key: c.Key ?? '',
+    size: c.Size != null ? parseInt(String(c.Size), 10) : 0,
+    lastModified: c.LastModified ?? '',
+    etag: c.ETag?.replace(/"/g, ''),
+  }))
+
+  const commonPrefixes: string[] = (root?.CommonPrefixes ?? [])
+    .map((cp: any) => cp.Prefix)
+    .filter(Boolean)
+
+  return {
+    objects,
+    commonPrefixes,
+    isTruncated: root?.IsTruncated === 'true',
+    continuationToken: root?.NextContinuationToken ?? undefined,
   }
-
-  // 提取所有 <CommonPrefixes><Prefix>...</Prefix></CommonPrefixes>
-  const prefixRegex = /<CommonPrefixes>\s*<Prefix>([^<]+)<\/Prefix>/g
-  while ((match = prefixRegex.exec(xml)) !== null) {
-    if (match[1]) commonPrefixes.push(unescapeXml(match[1]))
-  }
-
-  const isTruncated = extractXmlTag(xml, 'IsTruncated') === 'true'
-  const continuationToken = extractXmlTag(xml, 'NextContinuationToken') ?? undefined
-
-  return { objects, commonPrefixes, isTruncated, continuationToken }
 }
 
 /**
@@ -1096,11 +1129,13 @@ export async function deleteObjects(
   const queryString = 'delete='
 
   // 构造 XML body
-  const body = '<?xml version="1.0" encoding="UTF-8"?>'
-    + '<Delete>'
-    + keys.map(k => `<Object><Key>${escapeXml(k)}</Key></Object>`).join('')
-    + '<Quiet>false</Quiet>'
-    + '</Delete>'
+  const body = xmlBuilder.build({
+    '?xml': { '@_version': '1.0', '@_encoding': 'UTF-8' },
+    Delete: {
+      Object: keys.map(k => ({ Key: k })),
+      Quiet: 'false',
+    },
+  })
 
   const payloadHash = sha256Hex(body)
   const { authorization, amzDate } = signRequest({
@@ -1153,28 +1188,6 @@ export async function deleteObjects(
   }
 }
 
-/** XML 特殊字符转义 */
-function escapeXml(s: string): string {
-  return s
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&apos;')
-}
-
-/** XML 特殊字符反转义（S3 响应中的 Key/Prefix/Message 等文本会被转义） */
-function unescapeXml(s: string): string {
-  return s
-    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(parseInt(code, 10)))
-    .replace(/&#x([0-9a-fA-F]+);/g, (_, code) => String.fromCodePoint(parseInt(code, 16)))
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-}
-
 /**
  * 解析 DeleteMultipleObjects 响应。
  *
@@ -1186,27 +1199,19 @@ function unescapeXml(s: string): string {
  * 约定：响应中既不在 <Deleted> 也不在 <Error> 的 key，视为删除成功（兜底）。
  */
 function parseDeleteResultXml(xml: string, requestedKeys: string[]): DeleteObjectsResult {
-  const deleted: string[] = []
-  const errors: { key: string, error: string }[] = []
+  const parsed = xmlParser.parse(xml)
+  const root = parsed?.DeleteResult
 
-  // 已删除
-  const deletedRegex = /<Deleted>\s*<Key>([^<]+)<\/Key>/g
-  let match: RegExpExecArray | null
-  while ((match = deletedRegex.exec(xml)) !== null) {
-    if (match[1]) deleted.push(unescapeXml(match[1]))
-  }
+  const deleted: string[] = (root?.Deleted ?? [])
+    .map((d: any) => d.Key)
+    .filter(Boolean)
 
-  // 失败
-  const errorRegex = /<Error>([\s\S]*?)<\/Error>/g
-  while ((match = errorRegex.exec(xml)) !== null) {
-    const block = match[1] || ''
-    const key = extractXmlTag(block, 'Key')
-    const code = extractXmlTag(block, 'Code')
-    const message = extractXmlTag(block, 'Message')
-    if (key) {
-      errors.push({ key: unescapeXml(key), error: `${code || 'Error'}: ${message ? unescapeXml(message) : ''}` })
-    }
-  }
+  const errors: { key: string, error: string }[] = (root?.Error ?? [])
+    .map((e: any) => ({
+      key: e.Key ?? '',
+      error: `${e.Code || 'Error'}: ${e.Message ?? ''}`,
+    }))
+    .filter((e: { key: string, error: string }) => e.key)
 
   // 兜底：未在响应中出现的 key 视为删除成功
   const accounted = new Set([...deleted, ...errors.map(e => e.key)])

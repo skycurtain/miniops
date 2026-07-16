@@ -1,0 +1,23 @@
+# 构建产物
+.output
+.data
+.nuxt
+.nitro
+.cache
+dist
+
+# 依赖
+node_modules
+
+# 包管理
+bun.lock
+
+# 日志
+logs
+*.log
+
+# 杂项
+.DS_Store
+
+# Agent 工具
+.reasonix

@@ -9,7 +9,11 @@
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "start": "bun run .output/server/index.mjs",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
   },
   "dependencies": {
     "@nuxt/ui": "^4.9.0",
@@ -20,6 +24,11 @@
   },
   "devDependencies": {
     "@iconify-json/lucide": "^1.2.115",
-    "@types/node": "^26.1.0"
+    "@nuxt/eslint": "^1.16.0",
+    "@types/node": "^26.1.0",
+    "eslint": "^10.7.0",
+    "eslint-config-prettier": "^10.1.8",
+    "prettier": "^3.9.5",
+    "prettier-plugin-tailwindcss": "^0.8.1"
   }
 }

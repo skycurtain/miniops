@@ -458,9 +458,11 @@ async function onImportFile(event: Event) {
       </div>
 
       <!-- 两栏布局 -->
-      <div class="flex gap-3 flex-1 min-h-0">
+      <div class="flex min-h-0 flex-1 gap-3">
         <!-- 左侧：分组列表 -->
-        <div class="border-default bg-default flex w-56 shrink-0 flex-col overflow-y-auto rounded-lg border">
+        <div
+          class="border-default bg-default flex w-56 shrink-0 flex-col overflow-y-auto rounded-lg border"
+        >
           <div class="flex flex-col gap-0.5 p-2">
             <div
               v-for="group in groups"
@@ -482,9 +484,12 @@ async function onImportFile(event: Event) {
         </div>
 
         <!-- 右侧：选中分组详情 -->
-        <div v-if="selectedGroup" class="border-default bg-default flex-1 overflow-y-auto rounded-lg border">
+        <div
+          v-if="selectedGroup"
+          class="border-default bg-default flex min-h-0 flex-1 flex-col rounded-lg border"
+        >
           <!-- 分组标题行 -->
-          <div class="flex items-center gap-3 p-3">
+          <div class="flex shrink-0 items-center gap-3 p-3">
             <NuxtIcon name="i-lucide-folder" class="text-primary size-5 shrink-0" />
             <span class="text-highlighted font-semibold">{{ selectedGroup.name }}</span>
             <NuxtBadge v-if="selectedGroup.isDefault" color="neutral" variant="outline" size="sm">
@@ -540,11 +545,12 @@ async function onImportFile(event: Event) {
           </div>
 
           <!-- 实例表格 -->
-          <div class="border-default border-t p-3">
+          <div class="border-default flex-1 overflow-y-auto border-t p-3">
             <NuxtTable
               v-if="selectedGroup.instances.length"
               :data="selectedGroup.instances"
               :columns="columns"
+              sticky="header"
             >
               <template #name-cell="{ row }">
                 <span class="font-medium" :class="{ 'text-dimmed': !row.original.enabled }">

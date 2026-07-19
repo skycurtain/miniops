@@ -9,6 +9,8 @@ export interface MockInstance {
   id: string
   name: string
   endpoint: string
+  accessKey?: string
+  secretKey?: string
   enabled: boolean
   connectivity?: 'online' | 'offline' | 'auth-error' | 'testing' | null
   latency?: number
@@ -65,4 +67,17 @@ export const mockGroups: MockGroup[] = [
       },
     ],
   },
+  ...Array.from({ length: 25 }, (_, i) => ({
+    id: `grp-extra-${i + 1}`,
+    name: `业务分组-${i + 1}`,
+    description: `第 ${i + 1} 个业务分组`,
+    instances: Array.from({ length: Math.min((i + 1) * 3, 20) }, (_, j) => ({
+      id: `inst-extra-${i + 1}-${j + 1}`,
+      name: `节点${String.fromCharCode(68 + j)}`,
+      endpoint: `http://10.0.${i + 1}.${j + 10}:9000`,
+      enabled: j % 3 !== 0,
+      connectivity: (['online', 'offline', 'auth-error', 'online'] as const)[j % 4],
+      latency: j % 3 === 0 ? Math.floor(Math.random() * 20) + 5 : undefined,
+    })),
+  })),
 ]

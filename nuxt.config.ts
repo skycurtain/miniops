@@ -8,7 +8,7 @@ export default defineNuxtConfig({
       link: [{ rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' }],
     },
   },
-  modules: ['@nuxt/ui', '@nuxt/eslint'],
+  modules: ['@vueuse/nuxt', '@nuxt/ui', '@nuxt/eslint'],
   css: ['~/assets/css/main.css'],
   ui: {
     prefix: 'Nuxt',

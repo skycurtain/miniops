@@ -105,6 +105,11 @@ const instanceForm = reactive({
 })
 const instanceFormRef = ref()
 const instanceSubmitting = ref(false)
+const showSecretKey = ref(false)
+
+watch(instanceModalOpen, (open) => {
+  if (!open) showSecretKey.value = false
+})
 
 function instanceValidate(state: {
   name: string
@@ -124,10 +129,8 @@ function instanceValidate(state: {
       errors.push({ name: 'endpoint', message: 'endpoint 必须是合法的 http(s):// 地址' })
     }
   }
-  if (!state.accessKey.trim()) errors.push({ name: 'accessKey', message: 'accessKey 不能为空' })
-  if (instanceModalMode.value === 'create' && !state.secretKey.trim()) {
-    errors.push({ name: 'secretKey', message: 'secretKey 不能为空' })
-  }
+  if (!state.accessKey.trim()) errors.push({ name: 'accessKey', message: '用户名不能为空' })
+  if (!state.secretKey.trim()) errors.push({ name: 'secretKey', message: '密码不能为空' })
   return errors
 }
 
@@ -150,7 +153,7 @@ function openInstanceEdit(groupId: string, instance: MockInstance) {
   instanceForm.name = instance.name
   instanceForm.endpoint = instance.endpoint
   instanceForm.accessKey = instance.accessKey || ''
-  instanceForm.secretKey = ''
+  instanceForm.secretKey = instance.secretKey || ''
   instanceForm.enabled = instance.enabled
   instanceModalOpen.value = true
 }
@@ -183,8 +186,8 @@ async function onInstanceSubmit() {
     if (inst) {
       inst.name = instanceForm.name
       inst.endpoint = instanceForm.endpoint
-      inst.accessKey = instanceForm.accessKey || inst.accessKey
-      if (instanceForm.secretKey) inst.secretKey = instanceForm.secretKey
+      inst.accessKey = instanceForm.accessKey
+      inst.secretKey = instanceForm.secretKey
       inst.enabled = instanceForm.enabled
       toast.add({ title: '修改成功', description: `实例「${inst.name}」已更新`, color: 'success' })
     }
@@ -545,12 +548,13 @@ async function onImportFile(event: Event) {
           </div>
 
           <!-- 实例表格 -->
-          <div class="border-default flex-1 overflow-y-auto border-t p-3">
+          <div class="border-default flex-1 overflow-hidden border-t p-3">
             <NuxtTable
               v-if="selectedGroup.instances.length"
               :data="selectedGroup.instances"
               :columns="columns"
               sticky="header"
+              class="h-full"
             >
               <template #name-cell="{ row }">
                 <span class="font-medium" :class="{ 'text-dimmed': !row.original.enabled }">
@@ -700,7 +704,7 @@ async function onImportFile(event: Event) {
           </NuxtForm>
         </template>
         <template #footer>
-          <div class="flex justify-end gap-2">
+          <div class="flex w-full justify-end gap-2">
             <NuxtButton
               color="neutral"
               variant="ghost"
@@ -734,28 +738,43 @@ async function onImportFile(event: Event) {
             <NuxtFormField label="名称" name="name" required>
               <NuxtInput v-model="instanceForm.name" placeholder="实例名称" class="w-full" />
             </NuxtFormField>
-            <NuxtFormField label="Endpoint" name="endpoint" required class="mt-4">
+            <NuxtFormField label="服务端点" name="endpoint" required class="mt-4">
               <NuxtInput
                 v-model="instanceForm.endpoint"
                 placeholder="http://127.0.0.1:9000"
                 class="w-full"
               />
             </NuxtFormField>
-            <NuxtFormField label="Access Key" name="accessKey" required class="mt-4">
-              <NuxtInput v-model="instanceForm.accessKey" placeholder="accessKey" class="w-full" />
-            </NuxtFormField>
-            <NuxtFormField
-              :label="instanceModalMode === 'edit' ? 'Secret Key（留空不修改）' : 'Secret Key'"
-              name="secretKey"
-              :required="instanceModalMode === 'create'"
-              class="mt-4"
-            >
+            <NuxtFormField label="用户名" name="accessKey" required class="mt-4">
               <NuxtInput
-                v-model="instanceForm.secretKey"
-                type="password"
-                :placeholder="instanceModalMode === 'edit' ? '••••••••' : 'secretKey'"
+                v-model="instanceForm.accessKey"
+                placeholder="如 minioadmin（Access Key）"
                 class="w-full"
               />
+            </NuxtFormField>
+            <NuxtFormField label="密码" name="secretKey" required class="mt-4">
+              <NuxtInput
+                v-model="instanceForm.secretKey"
+                :type="showSecretKey ? 'text' : 'password'"
+                placeholder="如 minioadmin（Secret Key）"
+                class="w-full"
+              >
+                <template #trailing>
+                  <NuxtButton
+                    color="neutral"
+                    variant="ghost"
+                    size="sm"
+                    :icon="showSecretKey ? 'i-lucide-eye-off' : 'i-lucide-eye'"
+                    class="size-6"
+                    @click="
+                      (e: MouseEvent) => {
+                        e.stopPropagation()
+                        showSecretKey = !showSecretKey
+                      }
+                    "
+                  />
+                </template>
+              </NuxtInput>
             </NuxtFormField>
             <NuxtFormField label="启用" name="enabled" class="mt-4">
               <NuxtSwitch v-model="instanceForm.enabled" />
@@ -763,7 +782,7 @@ async function onImportFile(event: Event) {
           </NuxtForm>
         </template>
         <template #footer>
-          <div class="flex justify-end gap-2">
+          <div class="flex w-full justify-end gap-2">
             <NuxtButton
               color="neutral"
               variant="ghost"
@@ -797,7 +816,7 @@ async function onImportFile(event: Event) {
           <p class="text-muted">{{ confirmDescription }}</p>
         </template>
         <template #footer>
-          <div class="flex justify-end gap-2">
+          <div class="flex w-full justify-end gap-2">
             <NuxtButton
               color="neutral"
               variant="ghost"

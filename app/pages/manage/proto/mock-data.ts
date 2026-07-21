@@ -73,6 +73,23 @@ export const mockGroups: MockGroup[] = [
       },
     ],
   },
+  {
+    id: 'grp-long',
+    name: '华南区域生产环境核心数据存储集群-深圳机房A区-对象存储专用',
+    description: '超长名称测试分组',
+    instances: [
+      {
+        id: 'inst-long-1',
+        name: '深A主节点',
+        endpoint: 'http://10.0.0.4:9000',
+        accessKey: 'sz-admin',
+        secretKey: 'sz-secret-2025',
+        enabled: true,
+        connectivity: 'online',
+        latency: 8,
+      },
+    ],
+  },
   ...Array.from({ length: 25 }, (_, i) => ({
     id: `grp-extra-${i + 1}`,
     name: `业务分组-${i + 1}`,

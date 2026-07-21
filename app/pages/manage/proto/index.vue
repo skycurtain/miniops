@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { TableColumn, FormError } from '@nuxt/ui'
+import type { TableColumn, FormError, DropdownMenuItem } from '@nuxt/ui'
 import { mockGroups, type MockInstance, type MockGroup } from './mock-data'
 
 definePageMeta({ layout: 'default' })
@@ -42,6 +42,29 @@ function groupValidate(state: { name: string; description: string }): FormError<
   const errors: FormError<string>[] = []
   if (!state.name.trim()) errors.push({ name: 'name', message: '名称不能为空' })
   return errors
+}
+
+function groupRowItems(group: MockGroup): DropdownMenuItem[][] {
+  const items: DropdownMenuItem[][] = [
+    [
+      {
+        label: '编辑分组',
+        icon: 'i-lucide-pencil',
+        onSelect: () => openGroupEdit(group),
+      },
+    ],
+  ]
+  if (!group.isDefault) {
+    items.push([
+      {
+        label: '删除分组',
+        icon: 'i-lucide-trash-2',
+        color: 'error',
+        onSelect: () => deleteGroup(group),
+      },
+    ])
+  }
+  return items
 }
 
 function openGroupCreate() {
@@ -464,24 +487,50 @@ async function onImportFile(event: Event) {
       <div class="flex min-h-0 flex-1 gap-3">
         <!-- 左侧：分组列表 -->
         <div
-          class="border-default bg-default flex w-56 shrink-0 flex-col overflow-y-auto rounded-lg border"
+          class="border-default bg-default flex w-64 shrink-0 flex-col overflow-y-auto rounded-lg border"
         >
           <div class="flex flex-col gap-0.5 p-2">
             <div
               v-for="group in groups"
               :key="group.id"
-              class="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5"
+              class="group flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5"
               :class="selectedGroupId === group.id ? 'bg-elevated' : 'hover:bg-elevated/50'"
               @click="selectedGroupId = group.id"
             >
               <NuxtIcon name="i-lucide-folder" class="text-primary size-4 shrink-0" />
-              <span class="truncate text-sm font-medium">{{ group.name }}</span>
-              <NuxtBadge v-if="group.isDefault" color="neutral" variant="outline" size="sm">
+              <NuxtTooltip :text="group.name" :content="{ side: 'top' }" :delay-duration="300">
+                <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ group.name }}</span>
+              </NuxtTooltip>
+              <NuxtBadge
+                v-if="group.isDefault"
+                color="neutral"
+                variant="outline"
+                size="sm"
+                class="shrink-0"
+              >
                 内置
               </NuxtBadge>
-              <NuxtBadge color="neutral" variant="subtle" size="sm" class="ml-auto">
+              <NuxtBadge
+                color="neutral"
+                variant="subtle"
+                size="sm"
+                class="ml-auto shrink-0"
+              >
                 {{ group.instances.length }}
               </NuxtBadge>
+              <NuxtDropdownMenu
+                :items="groupRowItems(group)"
+                :content="{ align: 'end', sideOffset: 4 }"
+              >
+                <NuxtButton
+                  size="xs"
+                  color="neutral"
+                  variant="ghost"
+                  icon="i-lucide-more-vertical"
+                  class="shrink-0"
+                  @click.stop
+                />
+              </NuxtDropdownMenu>
             </div>
           </div>
         </div>

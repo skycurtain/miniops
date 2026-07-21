@@ -18,6 +18,9 @@ logs
 .fleet
 .idea
 
+# Runtime data
+server/data/groups.json
+
 # Editor / agent tooling
 .reasonix/
 

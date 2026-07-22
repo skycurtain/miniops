@@ -1,0 +1,1189 @@
+<script setup lang="ts">
+import type { TreeItem } from '@nuxt/ui'
+import {
+  type MockGroup,
+  type MockInstance,
+  type ObjectInfo,
+  type BucketInfo,
+  type PreviewType,
+  mockGroups,
+  fetchBuckets,
+  fetchObjects,
+  fetchMoreObjects,
+  getPreviewContent,
+  formatSize,
+  formatDate,
+  fileIcon,
+  getPreviewType,
+  displayName,
+} from './mock-data'
+import BrowseUploadModal from './upload-modal.vue'
+import CopyMoveModal from './copy-move-modal.vue'
+
+definePageMeta({ layout: 'default' })
+
+// ==================== 路由 ====================
+const route = useRoute()
+const router = useRouter()
+
+// ==================== 数据 ====================
+const groups = ref<MockGroup[]>(structuredClone(mockGroups))
+const toast = useToast()
+
+// ==================== 实例树 ====================
+/** 扩展 TreeItem，携带实例 id 用于高亮判断 */
+interface InstanceTreeItem extends TreeItem {
+  instanceId?: string
+  children?: InstanceTreeItem[]
+}
+
+/** 构建 Tree 组件数据 */
+const treeItems = computed<InstanceTreeItem[]>(() =>
+  groups.value.map((g) => ({
+    label: g.name,
+    icon: 'i-lucide-folder',
+    defaultExpanded: true,
+    children: g.instances
+      .filter((i) => i.enabled)
+      .map((i) => ({
+        label: i.name,
+        icon: 'i-lucide-server',
+        instanceId: i.id,
+        onSelect: () => openInstance(i),
+      })),
+  })),
+)
+
+/** Tree 的 v-model 双向绑定：activeTabId (string) <-> TreeItem */
+const treeSelected = computed({
+  get: () => {
+    if (!activeTabId.value) return undefined
+    for (const g of treeItems.value) {
+      const found = g.children?.find((c) => c.instanceId === activeTabId.value)
+      if (found) return found
+    }
+    return undefined
+  },
+  set: (val) => {
+    if (val && (val as InstanceTreeItem).instanceId) {
+      activeTabId.value = (val as InstanceTreeItem).instanceId!
+      syncTabsToRoute()
+    }
+  },
+})
+
+// ==================== 标签页 ====================
+interface BrowseTab {
+  instanceId: string
+  instanceName: string
+  // 浏览状态
+  buckets: BucketInfo[]
+  bucketsLoading: boolean
+  bucketError: string
+  selectedBucket: string
+  objects: ObjectInfo[]
+  commonPrefixes: string[]
+  currentPrefix: string
+  objectsLoading: boolean
+  objectsError: string
+  hasMore: boolean
+  loadingMore: boolean
+  // 选中状态
+  selectedKeys: Set<string>
+  selectedPrefixes: Set<string>
+}
+
+const tabs = ref<BrowseTab[]>([])
+const activeTabId = ref<string>('') // instanceId
+
+function createTab(instance: MockInstance): BrowseTab {
+  return {
+    instanceId: instance.id,
+    instanceName: instance.name,
+    buckets: [],
+    bucketsLoading: false,
+    bucketError: '',
+    selectedBucket: '',
+    objects: [],
+    commonPrefixes: [],
+    currentPrefix: '',
+    objectsLoading: false,
+    objectsError: '',
+    hasMore: false,
+    loadingMore: false,
+    selectedKeys: new Set(),
+    selectedPrefixes: new Set(),
+  }
+}
+
+const activeTab = computed(() => tabs.value.find((t) => t.instanceId === activeTabId.value))
+
+/** 已打开的实例 id 集合 */
+const openedInstanceIds = computed(() => new Set(tabs.value.map((t) => t.instanceId)))
+
+/** 同步打开的实例到 URL query */
+function syncTabsToRoute() {
+  const ids = tabs.value.map((t) => t.instanceId)
+  router.replace({
+    query: {
+      ...route.query,
+      tabs: ids.length ? ids.join(',') : undefined,
+      active: activeTabId.value || undefined,
+    },
+  })
+}
+
+function openInstance(instance: MockInstance) {
+  const existing = tabs.value.find((t) => t.instanceId === instance.id)
+  if (existing) {
+    activeTabId.value = instance.id
+    syncTabsToRoute()
+    return
+  }
+  tabs.value.push(createTab(instance))
+  activeTabId.value = instance.id
+  // 重新从响应式数组取代理对象，确保后续修改能触发渲染
+  const tab = tabs.value[tabs.value.length - 1]!
+  loadBuckets(tab)
+  syncTabsToRoute()
+}
+
+function closeTab(instanceId: string) {
+  const idx = tabs.value.findIndex((t) => t.instanceId === instanceId)
+  if (idx === -1) return
+  tabs.value.splice(idx, 1)
+  if (activeTabId.value === instanceId) {
+    activeTabId.value = tabs.value[Math.min(idx, tabs.value.length - 1)]?.instanceId ?? ''
+  }
+  syncTabsToRoute()
+}
+
+/** 切换激活标签页 */
+function switchTab(instanceId: string) {
+  activeTabId.value = instanceId
+  syncTabsToRoute()
+}
+
+/** 从 URL 恢复打开的实例 */
+function restoreTabsFromRoute() {
+  const tabsParam = route.query.tabs as string | undefined
+  const activeParam = route.query.active as string | undefined
+  if (!tabsParam) return
+  const ids = tabsParam.split(',').filter(Boolean)
+  for (const id of ids) {
+    // 在所有分组里找实例
+    let instance: MockInstance | undefined
+    for (const g of groups.value) {
+      instance = g.instances.find((i) => i.id === id && i.enabled)
+      if (instance) break
+    }
+    if (instance && !tabs.value.find((t) => t.instanceId === id)) {
+      tabs.value.push(createTab(instance))
+      const tab = tabs.value[tabs.value.length - 1]!
+      loadBuckets(tab)
+    }
+  }
+  if (activeParam && tabs.value.find((t) => t.instanceId === activeParam)) {
+    activeTabId.value = activeParam
+  } else if (tabs.value.length) {
+    activeTabId.value = tabs.value[0]!.instanceId
+  }
+}
+
+// 页面加载时从 URL 恢复
+restoreTabsFromRoute()
+
+// ==================== Bucket 加载 ====================
+async function loadBuckets(tab: BrowseTab) {
+  tab.bucketsLoading = true
+  tab.bucketError = ''
+  tab.buckets = []
+  tab.selectedBucket = ''
+  try {
+    tab.buckets = await fetchBuckets(tab.instanceId)
+  } catch (e: unknown) {
+    tab.bucketError = e instanceof Error ? e.message : '加载失败'
+  } finally {
+    tab.bucketsLoading = false
+  }
+}
+
+function selectBucket(tab: BrowseTab, bucket: string) {
+  tab.selectedBucket = bucket
+  tab.currentPrefix = ''
+  tab.selectedKeys = new Set()
+  tab.selectedPrefixes = new Set()
+  loadObjects(tab)
+}
+
+// ==================== 对象列表加载 ====================
+async function loadObjects(tab: BrowseTab) {
+  if (!tab.selectedBucket) return
+  tab.objectsLoading = true
+  tab.objectsError = ''
+  tab.objects = []
+  tab.commonPrefixes = []
+  tab.selectedKeys = new Set()
+  tab.selectedPrefixes = new Set()
+  try {
+    const res = await fetchObjects(tab.instanceId, tab.selectedBucket, tab.currentPrefix)
+    tab.objects = res.objects
+    tab.commonPrefixes = res.commonPrefixes
+    tab.hasMore = res.isTruncated
+  } catch (e: unknown) {
+    tab.objectsError = e instanceof Error ? e.message : '加载失败'
+  } finally {
+    tab.objectsLoading = false
+  }
+}
+
+async function loadMore(tab: BrowseTab) {
+  if (!tab.hasMore || tab.loadingMore) return
+  tab.loadingMore = true
+  try {
+    const res = await fetchMoreObjects(tab.instanceId, tab.selectedBucket, tab.currentPrefix)
+    tab.objects.push(...res.objects)
+    tab.commonPrefixes.push(...res.commonPrefixes)
+    tab.hasMore = res.isTruncated
+  } catch {
+    toast.add({ title: '加载更多失败', color: 'error' })
+  } finally {
+    tab.loadingMore = false
+  }
+}
+
+// ==================== 面包屑 ====================
+function getBreadcrumbs(tab: BrowseTab) {
+  const p = tab.currentPrefix
+  if (!p) return [{ label: tab.selectedBucket, prefix: '' }]
+  const segments = p.replace(/\/$/, '').split('/').filter(Boolean)
+  const crumbs = [{ label: tab.selectedBucket, prefix: '' }]
+  let acc = ''
+  for (const seg of segments) {
+    acc += `${seg}/`
+    crumbs.push({ label: `${seg}/`, prefix: acc })
+  }
+  return crumbs
+}
+
+function navigateToPrefix(tab: BrowseTab, prefix: string) {
+  tab.currentPrefix = prefix
+  loadObjects(tab)
+}
+
+// ==================== 多选 ====================
+function allSelectable(tab: BrowseTab): string[] {
+  return [...tab.commonPrefixes, ...tab.objects.map((o) => o.key)]
+}
+
+function selectedCount(tab: BrowseTab): number {
+  return tab.selectedKeys.size + tab.selectedPrefixes.size
+}
+
+function isAllSelected(tab: BrowseTab): boolean {
+  const all = allSelectable(tab)
+  return all.length > 0 && all.every((k) => tab.selectedKeys.has(k) || tab.selectedPrefixes.has(k))
+}
+
+function isPartialSelected(tab: BrowseTab): boolean {
+  const all = allSelectable(tab)
+  return (
+    all.some((k) => tab.selectedKeys.has(k) || tab.selectedPrefixes.has(k)) && !isAllSelected(tab)
+  )
+}
+
+function toggleSelectAll(tab: BrowseTab) {
+  if (isAllSelected(tab)) {
+    tab.selectedKeys = new Set()
+    tab.selectedPrefixes = new Set()
+  } else {
+    tab.selectedKeys = new Set(tab.objects.map((o) => o.key))
+    tab.selectedPrefixes = new Set(tab.commonPrefixes)
+  }
+}
+
+function toggleSelectKey(tab: BrowseTab, key: string) {
+  const set = new Set(tab.selectedKeys)
+  set.has(key) ? set.delete(key) : set.add(key)
+  tab.selectedKeys = set
+}
+
+function toggleSelectPrefix(tab: BrowseTab, prefix: string) {
+  const set = new Set(tab.selectedPrefixes)
+  set.has(prefix) ? set.delete(prefix) : set.add(prefix)
+  tab.selectedPrefixes = set
+}
+
+// ==================== 预览 ====================
+const previewOpen = ref(false)
+const previewKey = ref('')
+const previewType = ref<PreviewType>(null)
+const textContent = ref('')
+const textLoading = ref(false)
+const textError = ref('')
+const previewObject = computed(() => activeTab.value?.objects.find((o) => o.key === previewKey.value))
+
+function openPreview(key: string) {
+  const type = getPreviewType(key)
+  if (!type) return
+  previewKey.value = key
+  previewType.value = type
+  previewOpen.value = true
+  textContent.value = ''
+  textError.value = ''
+  if (type === 'text') {
+    fetchTextContent(key)
+  }
+}
+
+function closePreview() {
+  previewOpen.value = false
+  previewKey.value = ''
+  previewType.value = null
+  textContent.value = ''
+  textError.value = ''
+}
+
+function fetchTextContent(key: string) {
+  textLoading.value = true
+  setTimeout(() => {
+    const obj = previewObject.value
+    if (obj && obj.size > 2 * 1024 * 1024) {
+      textError.value = `文件过大（${formatSize(obj.size)} > 2MB），请下载后查看`
+      textLoading.value = false
+      return
+    }
+    const res = getPreviewContent(key)
+    if (res.type === 'binary') {
+      textError.value = '该文件可能不是文本文件，请下载后查看'
+    } else {
+      textContent.value = res.content
+    }
+    textLoading.value = false
+  }, 300)
+}
+
+// ==================== 下载 ====================
+function downloadObject(key: string) {
+  toast.add({ title: `开始下载：${displayName(key, activeTab.value?.currentPrefix ?? '')}`, color: 'info' })
+}
+
+function downloadSelected() {
+  const tab = activeTab.value
+  if (!tab) return
+  const { keys, prefixes } = getEffectiveSelection(tab)
+  const count = keys.size + prefixes.size
+  // 模拟超限检查
+  if (count > 1000) {
+    toast.add({ title: `选中对象过多（${count} 个），上限 1000 个`, color: 'error' })
+    return
+  }
+  toast.add({ title: `正在打包下载 ${count} 项（ZIP）`, color: 'info' })
+}
+
+// ==================== 上传弹窗 ====================
+const uploadModalOpen = ref(false)
+
+function openUpload() {
+  uploadModalOpen.value = true
+}
+
+function onUploadComplete() {
+  if (activeTab.value && activeTab.value.selectedBucket) {
+    loadObjects(activeTab.value)
+  }
+}
+
+// ==================== 删除确认 ====================
+const deleteModalOpen = ref(false)
+const deleteLoading = ref(false)
+const deleteItems = ref<{ name: string; size: number; isFolder: boolean }[]>([])
+const isHighRisk = ref(false)
+const deleteConfirmInput = ref('')
+const DELETE_ACTION_NORMAL = 'normal'
+const DELETE_ACTION_HIGH = 'high'
+const deleteAction = ref(DELETE_ACTION_NORMAL)
+
+/** 单行操作时的临时目标，优先于选中集合 */
+const singleTarget = ref<{ type: 'object' | 'folder'; key: string } | null>(null)
+
+/** 计算有效选中的 keys 和 prefixes */
+function getEffectiveSelection(tab: BrowseTab) {
+  if (singleTarget.value) {
+    return singleTarget.value.type === 'object'
+      ? { keys: new Set([singleTarget.value.key]), prefixes: new Set<string>() }
+      : { keys: new Set<string>(), prefixes: new Set([singleTarget.value.key]) }
+  }
+  return { keys: tab.selectedKeys, prefixes: tab.selectedPrefixes }
+}
+
+function openDeleteConfirm() {
+  const tab = activeTab.value
+  if (!tab) return
+  const { keys, prefixes } = getEffectiveSelection(tab)
+  const items: { name: string; size: number; isFolder: boolean }[] = []
+  for (const pfx of prefixes) {
+    items.push({ name: pfx.replace(tab.currentPrefix, ''), size: 0, isFolder: true })
+  }
+  for (const key of keys) {
+    const obj = tab.objects.find((o) => o.key === key)
+    items.push({
+      name: displayName(key, tab.currentPrefix),
+      size: obj?.size ?? 0,
+      isFolder: false,
+    })
+  }
+  deleteItems.value = items
+
+  // 高危场景：选中覆盖当前前缀全部内容 + 前缀为空（bucket 根）
+  const all = allSelectable(tab)
+  const allSelected =
+    all.length > 0 && all.every((k) => keys.has(k) || prefixes.has(k))
+  isHighRisk.value = allSelected && tab.currentPrefix === ''
+  deleteConfirmInput.value = ''
+  deleteAction.value = isHighRisk.value ? DELETE_ACTION_HIGH : DELETE_ACTION_NORMAL
+  deleteModalOpen.value = true
+}
+
+const canConfirmHighRisk = computed(
+  () => deleteConfirmInput.value.trim() === (activeTab.value?.selectedBucket ?? ''),
+)
+
+async function onConfirmDelete() {
+  deleteLoading.value = true
+  await new Promise((r) => setTimeout(r, 800))
+  deleteLoading.value = false
+  deleteModalOpen.value = false
+  singleTarget.value = null
+  const tab = activeTab.value
+  if (tab) {
+    tab.selectedKeys = new Set()
+    tab.selectedPrefixes = new Set()
+    loadObjects(tab)
+  }
+  toast.add({ title: `已删除 ${deleteItems.value.length} 个项目`, color: 'success' })
+}
+
+// ==================== 复制/移动弹窗 ====================
+const copyMoveModalOpen = ref(false)
+const copyMoveMode = ref<'copy' | 'move'>('copy')
+
+function openCopy() {
+  singleTarget.value = null
+  copyMoveMode.value = 'copy'
+  copyMoveModalOpen.value = true
+}
+
+function openMove() {
+  singleTarget.value = null
+  copyMoveMode.value = 'move'
+  copyMoveModalOpen.value = true
+}
+
+/** 单行复制 */
+function openSingleCopy(key: string) {
+  singleTarget.value = { type: 'object', key }
+  copyMoveMode.value = 'copy'
+  copyMoveModalOpen.value = true
+}
+
+/** 单行移动 */
+function openSingleMove(key: string) {
+  singleTarget.value = { type: 'object', key }
+  copyMoveMode.value = 'move'
+  copyMoveModalOpen.value = true
+}
+
+/** 单行删除 */
+function openSingleDelete(key: string) {
+  singleTarget.value = { type: 'object', key }
+  openDeleteConfirm()
+}
+
+/** 单个文件夹下载 */
+function downloadSinglePrefix(prefix: string) {
+  singleTarget.value = { type: 'folder', key: prefix }
+  downloadSelected()
+  singleTarget.value = null
+}
+
+/** 单个文件夹复制 */
+function openSinglePrefixCopy(prefix: string) {
+  singleTarget.value = { type: 'folder', key: prefix }
+  copyMoveMode.value = 'copy'
+  copyMoveModalOpen.value = true
+}
+
+/** 单个文件夹移动 */
+function openSinglePrefixMove(prefix: string) {
+  singleTarget.value = { type: 'folder', key: prefix }
+  copyMoveMode.value = 'move'
+  copyMoveModalOpen.value = true
+}
+
+/** 单个文件夹删除 */
+function openSinglePrefixDelete(prefix: string) {
+  singleTarget.value = { type: 'folder', key: prefix }
+  openDeleteConfirm()
+}
+
+function onCopyMoveComplete() {
+  singleTarget.value = null
+  if (activeTab.value && activeTab.value.selectedBucket) {
+    loadObjects(activeTab.value)
+  }
+}
+
+</script>
+
+<template>
+  <NuxtDashboardPanel id="browse-proto">
+    <template #header>
+      <AppNavbar title="实例访问（原型）" />
+    </template>
+
+    <template #body>
+      <div class="flex h-full min-h-0 gap-3">
+        <!-- ==================== 左侧栏：实例树 ==================== -->
+        <div
+          class="border-default bg-default flex shrink-0 flex-col overflow-hidden rounded-lg border"
+          style="width: 260px"
+        >
+          <div class="flex shrink-0 items-center px-3 py-2">
+            <span class="text-highlighted text-sm font-semibold">实例树</span>
+          </div>
+          <div class="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-2 pb-2">
+            <NuxtTree
+              v-model="treeSelected"
+              :items="treeItems"
+              :get-key="(item: InstanceTreeItem) => item.instanceId ?? item.label as string"
+              color="primary"
+              size="sm"
+            >
+              <template #item-trailing="{ item }">
+                <span
+                  v-if="(item as InstanceTreeItem).instanceId && activeTabId === (item as InstanceTreeItem).instanceId"
+                  class="bg-primary size-2 shrink-0 rounded-full"
+                />
+                <span
+                  v-else-if="(item as InstanceTreeItem).instanceId && openedInstanceIds.has((item as InstanceTreeItem).instanceId!)"
+                  class="border-primary size-2 shrink-0 rounded-full border-2"
+                />
+              </template>
+            </NuxtTree>
+          </div>
+        </div>
+
+        <!-- ==================== 右侧栏：标签页区域 ==================== -->
+        <div class="border-default bg-default flex min-w-0 flex-1 flex-col overflow-hidden rounded-lg border">
+          <!-- 标签栏 -->
+          <div
+            v-if="tabs.length"
+            class="border-default flex min-w-0 shrink-0 items-center gap-0 overflow-x-auto border-b"
+          >
+            <button
+              v-for="tab in tabs"
+              :key="tab.instanceId"
+              :title="tab.instanceName"
+              class="group border-default flex shrink-0 items-center gap-2 border-r px-3 py-2 text-left text-sm transition-colors"
+              :class="{
+                'bg-primary/10 font-medium text-primary':
+                  activeTabId === tab.instanceId,
+                'text-muted hover:bg-elevated': activeTabId !== tab.instanceId,
+              }"
+              style="width: 200px"
+              @click="switchTab(tab.instanceId)"
+            >
+              <NuxtIcon
+                name="i-lucide-server"
+                class="size-4 shrink-0"
+                :class="activeTabId === tab.instanceId ? 'text-primary' : 'text-muted'"
+              />
+              <span class="block truncate" style="width: 120px">{{ tab.instanceName }}</span>
+              <span
+                class="hover:bg-elevated flex size-5 shrink-0 cursor-pointer items-center justify-center rounded-md"
+                @click.stop="closeTab(tab.instanceId)"
+              >
+                <NuxtIcon name="i-lucide-x" class="size-3.5" />
+              </span>
+            </button>
+          </div>
+
+          <!-- 标签页内容 -->
+          <div class="min-h-0 flex-1 overflow-hidden">
+            <!-- 空状态 -->
+            <div v-if="!activeTab" class="flex h-full items-center justify-center">
+              <div class="flex flex-col items-center gap-3 text-center">
+                <NuxtIcon name="i-lucide-folder-open" class="text-dimmed size-12" />
+                <p class="text-muted">请从左侧选择一个实例</p>
+              </div>
+            </div>
+
+            <!-- 实例标签页内容 -->
+            <template v-else>
+              <!-- Bucket 加载失败 -->
+              <div
+                v-if="activeTab.bucketError && !activeTab.selectedBucket"
+                class="flex h-full items-center justify-center"
+              >
+                <div class="flex flex-col items-center gap-3 text-center">
+                  <NuxtIcon name="i-lucide-cloud-off" class="text-error size-10" />
+                  <p class="text-error">{{ activeTab.bucketError }}</p>
+                  <NuxtButton
+                    size="sm"
+                    color="neutral"
+                    variant="outline"
+                    icon="i-lucide-refresh-cw"
+                    label="重试"
+                    @click="loadBuckets(activeTab)"
+                  />
+                </div>
+              </div>
+
+              <!-- Bucket 列表 -->
+              <div
+                v-else-if="!activeTab.selectedBucket"
+                class="flex h-full flex-col"
+              >
+                <div class="border-default flex shrink-0 items-center gap-2 border-b px-4 py-3">
+                  <NuxtIcon name="i-lucide-server" class="text-primary size-5" />
+                  <span class="text-highlighted font-semibold">{{ activeTab.instanceName }}</span>
+                  <NuxtBadge color="neutral" variant="subtle" size="sm">
+                    {{ activeTab.buckets.length }} 个 bucket
+                  </NuxtBadge>
+                </div>
+                <div class="min-h-0 flex-1 overflow-y-auto p-4">
+                  <div v-if="activeTab.bucketsLoading" class="flex items-center justify-center py-12">
+                    <NuxtIcon name="i-lucide-loader-circle" class="text-muted size-6 animate-spin" />
+                  </div>
+                  <div
+                    v-else-if="!activeTab.buckets.length"
+                    class="flex flex-col items-center gap-3 py-16"
+                  >
+                    <NuxtIcon name="i-lucide-database-zap" class="text-muted size-10" />
+                    <p class="text-muted">该实例下没有可用的 bucket</p>
+                  </div>
+                  <div v-else class="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    <button
+                      v-for="b in activeTab.buckets"
+                      :key="b.name"
+                      class="border-default hover:border-primary hover:bg-primary/5 group flex cursor-pointer items-center gap-3 rounded-lg border p-4 text-left transition-colors"
+                      @click="selectBucket(activeTab, b.name)"
+                    >
+                      <NuxtIcon name="i-lucide-database" class="text-primary size-8 shrink-0" />
+                      <div class="min-w-0 flex-1">
+                        <p class="text-highlighted truncate font-medium font-mono">{{ b.name }}</p>
+                        <p class="text-muted text-xs">{{ formatDate(b.createdAt) }}</p>
+                      </div>
+                      <NuxtIcon
+                        name="i-lucide-chevron-right"
+                        class="text-muted size-4 shrink-0 opacity-0 group-hover:opacity-100"
+                      />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <!-- 对象列表 -->
+              <div v-else class="flex h-full flex-col">
+                <!-- 面包屑 + 工具栏 -->
+                <div class="border-default shrink-0 border-b px-4 py-2">
+                  <div class="flex items-center gap-1 flex-wrap text-sm">
+                    <button
+                      class="hover:text-primary text-muted"
+                      @click="activeTab.selectedBucket = ''; activeTab.objects = []; activeTab.commonPrefixes = []"
+                    >
+                      {{ activeTab.instanceName }}
+                    </button>
+                    <template v-for="(crumb, idx) in getBreadcrumbs(activeTab)" :key="idx">
+                      <NuxtIcon name="i-lucide-chevron-right" class="text-muted size-3" />
+                      <button
+                        class="font-mono"
+                        :class="
+                          idx === getBreadcrumbs(activeTab).length - 1
+                            ? 'text-highlighted font-semibold'
+                            : 'text-muted hover:text-primary'
+                        "
+                        @click="navigateToPrefix(activeTab, crumb.prefix)"
+                      >
+                        {{ crumb.label }}
+                      </button>
+                    </template>
+                  </div>
+
+                  <!-- 工具栏 -->
+                  <div class="mt-2 flex items-center gap-2">
+                    <NuxtCheckbox
+                      :model-value="isAllSelected(activeTab)"
+                      :indeterminate="isPartialSelected(activeTab)"
+                      @update:model-value="toggleSelectAll(activeTab)"
+                    />
+                    <span class="text-muted text-xs">
+                      已选 {{ selectedCount(activeTab) }}/{{ allSelectable(activeTab).length }}
+                      <span
+                        v-if="activeTab.selectedPrefixes.size > 0"
+                        class="text-warning"
+                      >
+                        （含 {{ activeTab.selectedPrefixes.size }} 个文件夹）
+                      </span>
+                    </span>
+                    <div class="flex-1" />
+                    <NuxtButton
+                      size="xs"
+                      color="primary"
+                      variant="outline"
+                      icon="i-lucide-upload"
+                      label="上传"
+                      @click="openUpload"
+                    />
+                    <NuxtButton
+                      v-if="selectedCount(activeTab) > 0"
+                      size="xs"
+                      color="info"
+                      variant="outline"
+                      icon="i-lucide-download"
+                      :label="`下载(${selectedCount(activeTab)})`"
+                      @click="downloadSelected"
+                    />
+                    <NuxtButton
+                      v-if="selectedCount(activeTab) > 0"
+                      size="xs"
+                      color="error"
+                      variant="outline"
+                      icon="i-lucide-trash-2"
+                      :label="`删除(${selectedCount(activeTab)})`"
+                      @click="openDeleteConfirm"
+                    />
+                    <NuxtButton
+                      v-if="selectedCount(activeTab) > 0"
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                      icon="i-lucide-copy"
+                      label="复制"
+                      @click="openCopy"
+                    />
+                    <NuxtButton
+                      v-if="selectedCount(activeTab) > 0"
+                      size="xs"
+                      color="neutral"
+                      variant="outline"
+                      icon="i-lucide-folder-input"
+                      label="移动"
+                      @click="openMove"
+                    />
+                  </div>
+                </div>
+
+                <!-- 对象列表内容 -->
+                <div class="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+                  <!-- 加载中 -->
+                  <div
+                    v-if="activeTab.objectsLoading"
+                    class="flex items-center justify-center py-12"
+                  >
+                    <NuxtIcon name="i-lucide-loader-circle" class="text-muted size-6 animate-spin" />
+                  </div>
+
+                  <!-- 加载失败 -->
+                  <div
+                    v-else-if="activeTab.objectsError"
+                    class="flex flex-col items-center gap-2 py-12"
+                  >
+                    <NuxtIcon name="i-lucide-cloud-off" class="text-error size-8" />
+                    <span class="text-error">{{ activeTab.objectsError }}</span>
+                    <NuxtButton
+                      size="sm"
+                      color="neutral"
+                      variant="outline"
+                      icon="i-lucide-refresh-cw"
+                      label="重试"
+                      @click="loadObjects(activeTab)"
+                    />
+                  </div>
+
+                  <!-- 空状态 -->
+                  <div
+                    v-else-if="
+                      !activeTab.objects.length && !activeTab.commonPrefixes.length
+                    "
+                    class="flex flex-col items-center gap-3 py-16"
+                  >
+                    <NuxtIcon name="i-lucide-folder-open" class="text-muted size-10" />
+                    <p class="text-muted">此 bucket 下没有对象</p>
+                    <NuxtButton
+                      size="sm"
+                      color="primary"
+                      variant="outline"
+                      icon="i-lucide-upload"
+                      label="上传文件"
+                      @click="openUpload"
+                    />
+                  </div>
+
+                  <!-- 列表 -->
+                  <div v-else class="flex flex-col gap-0.5 select-none">
+                    <!-- 虚拟文件夹 -->
+                    <div
+                      v-for="cp in activeTab.commonPrefixes"
+                      :key="`cp-${cp}`"
+                      class="group hover:bg-elevated flex items-center gap-3 rounded-md px-3 py-1.5 text-sm"
+                    >
+                      <NuxtCheckbox
+                        :model-value="activeTab.selectedPrefixes.has(cp)"
+                        @update:model-value="toggleSelectPrefix(activeTab, cp)"
+                      />
+                      <div
+                        class="flex min-w-0 flex-1 cursor-pointer items-center gap-2"
+                        @click="navigateToPrefix(activeTab, cp)"
+                      >
+                        <NuxtIcon name="i-lucide-folder" class="text-primary size-4 shrink-0" />
+                        <span class="truncate font-mono">{{
+                          cp.replace(activeTab.currentPrefix, '')
+                        }}</span>
+                      </div>
+                      <span class="text-muted w-20 shrink-0 text-right text-xs">-</span>
+                      <span class="text-muted w-36 shrink-0 text-right text-xs">-</span>
+                      <div
+                        class="flex w-32 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        <NuxtTooltip text="下载">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-download"
+                            @click="downloadSinglePrefix(cp)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="复制">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-copy"
+                            @click="openSinglePrefixCopy(cp)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="移动">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-folder-input"
+                            @click="openSinglePrefixMove(cp)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="删除">
+                          <NuxtButton
+                            size="xs"
+                            color="error"
+                            variant="ghost"
+                            icon="i-lucide-trash-2"
+                            @click="openSinglePrefixDelete(cp)"
+                          />
+                        </NuxtTooltip>
+                      </div>
+                    </div>
+
+                    <!-- 对象 -->
+                    <div
+                      v-for="obj in activeTab.objects"
+                      :key="obj.key"
+                      class="group hover:bg-elevated flex items-center gap-3 rounded-md px-3 py-1.5 text-sm"
+                    >
+                      <NuxtCheckbox
+                        :model-value="activeTab.selectedKeys.has(obj.key)"
+                        @update:model-value="toggleSelectKey(activeTab, obj.key)"
+                      />
+                      <NuxtIcon :name="fileIcon(obj.key)" class="text-muted size-4 shrink-0" />
+                      <NuxtTooltip :text="obj.key">
+                        <span class="min-w-0 flex-1 truncate font-mono">
+                          {{ displayName(obj.key, activeTab.currentPrefix) }}
+                        </span>
+                      </NuxtTooltip>
+                      <span class="text-muted w-20 shrink-0 text-right text-xs">{{
+                        formatSize(obj.size)
+                      }}</span>
+                      <span class="text-muted w-36 shrink-0 text-right text-xs">{{
+                        formatDate(obj.lastModified)
+                      }}</span>
+                      <div
+                        class="flex w-32 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
+                      >
+                        <NuxtTooltip v-if="getPreviewType(obj.key)" text="预览">
+                          <NuxtButton
+                            size="xs"
+                            color="info"
+                            variant="ghost"
+                            icon="i-lucide-eye"
+                            @click="openPreview(obj.key)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="下载">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-download"
+                            @click="downloadObject(obj.key)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="复制">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-copy"
+                            @click="openSingleCopy(obj.key)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="移动">
+                          <NuxtButton
+                            size="xs"
+                            color="neutral"
+                            variant="ghost"
+                            icon="i-lucide-folder-input"
+                            @click="openSingleMove(obj.key)"
+                          />
+                        </NuxtTooltip>
+                        <NuxtTooltip text="删除">
+                          <NuxtButton
+                            size="xs"
+                            color="error"
+                            variant="ghost"
+                            icon="i-lucide-trash-2"
+                            @click="openSingleDelete(obj.key)"
+                          />
+                        </NuxtTooltip>
+                      </div>
+                    </div>
+
+                    <!-- 加载更多 -->
+                    <div v-if="activeTab.hasMore" class="flex justify-center pt-3">
+                      <NuxtButton
+                        size="sm"
+                        color="neutral"
+                        variant="outline"
+                        icon="i-lucide-chevron-down"
+                        label="加载更多"
+                        :loading="activeTab.loadingMore"
+                        @click="loadMore(activeTab)"
+                      />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+
+      <!-- ==================== 预览抽屉 ==================== -->
+      <NuxtSlideover
+        v-model:open="previewOpen"
+        title="对象预览"
+        side="right"
+        :ui="{ content: 'w-full max-w-2xl sm:max-w-3xl' }"
+      >
+        <template #body>
+          <div class="flex h-full flex-col gap-3">
+            <!-- 顶部信息栏 -->
+            <div class="border-default flex items-start justify-between gap-4 border-b pb-3">
+              <div class="min-w-0 flex-1">
+                <div class="flex items-center gap-2">
+                  <NuxtIcon
+                    v-if="previewKey"
+                    :name="fileIcon(previewKey)"
+                    class="text-muted size-4 shrink-0"
+                  />
+                  <span class="text-highlighted truncate font-mono font-medium">
+                    {{ previewKey.split('/').pop() }}
+                  </span>
+                </div>
+                <div v-if="previewObject" class="text-muted mt-1 text-xs">
+                  {{ formatSize(previewObject.size) }} · {{ formatDate(previewObject.lastModified) }}
+                </div>
+                <div class="text-muted mt-0.5 text-xs">
+                  {{ activeTab?.instanceName }} / {{ activeTab?.selectedBucket }}
+                </div>
+              </div>
+              <NuxtButton
+                size="sm"
+                color="primary"
+                variant="outline"
+                icon="i-lucide-download"
+                label="下载"
+                @click="downloadObject(previewKey)"
+              />
+            </div>
+
+            <!-- 内容区 -->
+            <div class="min-h-0 flex-1 overflow-auto">
+              <!-- 图片 -->
+              <div
+                v-if="previewType === 'image'"
+                class="flex min-h-75 items-center justify-center bg-elevated/50 rounded-md"
+              >
+                <div
+                  class="text-muted flex flex-col items-center gap-2 py-16"
+                >
+                  <NuxtIcon name="i-lucide-image" class="size-16" />
+                  <span class="text-sm">图片预览（原型占位）</span>
+                  <span class="text-xs">实际实现通过后端代理 inline 展示</span>
+                </div>
+              </div>
+
+              <!-- 视频 -->
+              <div
+                v-else-if="previewType === 'video'"
+                class="flex min-h-75 items-center justify-center bg-elevated/50 rounded-md"
+              >
+                <div class="text-muted flex flex-col items-center gap-2 py-16">
+                  <NuxtIcon name="i-lucide-video" class="size-16" />
+                  <span class="text-sm">视频预览（原型占位）</span>
+                  <span class="text-xs">实际实现通过后端代理流式播放，支持 Range</span>
+                </div>
+              </div>
+
+              <!-- 音频 -->
+              <div
+                v-else-if="previewType === 'audio'"
+                class="flex flex-col items-center justify-center gap-4 py-12"
+              >
+                <NuxtIcon name="i-lucide-music" class="text-primary size-16" />
+                <span class="text-muted text-sm">{{ previewKey.split('/').pop() }}</span>
+                <div class="text-muted text-xs">音频预览（原型占位）</div>
+              </div>
+
+              <!-- 文本 -->
+              <div v-else-if="previewType === 'text'">
+                <div
+                  v-if="textLoading"
+                  class="text-muted flex items-center justify-center py-12"
+                >
+                  <NuxtIcon name="i-lucide-loader-circle" class="size-5 animate-spin" />
+                  <span class="ml-2">加载中…</span>
+                </div>
+                <div
+                  v-else-if="textError"
+                  class="flex flex-col items-center gap-2 py-12"
+                >
+                  <NuxtIcon name="i-lucide-file-warning" class="text-warning size-8" />
+                  <span class="text-warning px-4 text-center">{{ textError }}</span>
+                </div>
+                <pre
+                  v-else
+                  class="bg-elevated max-h-[70vh] overflow-auto rounded-md p-4 font-mono text-xs whitespace-pre-wrap break-all"><code>{{ textContent }}</code></pre>
+              </div>
+            </div>
+          </div>
+        </template>
+      </NuxtSlideover>
+
+      <!-- ==================== 上传弹窗 ==================== -->
+      <BrowseUploadModal
+        v-model:open="uploadModalOpen"
+        :instance-name="activeTab?.instanceName ?? ''"
+        :bucket="activeTab?.selectedBucket ?? ''"
+        :prefix="activeTab?.currentPrefix ?? ''"
+        @complete="onUploadComplete"
+      />
+
+      <!-- ==================== 复制/移动弹窗 ==================== -->
+      <CopyMoveModal
+        v-model:open="copyMoveModalOpen"
+        :mode="copyMoveMode"
+        :groups="groups"
+        :source-instance-id="activeTab?.instanceId ?? ''"
+        :source-instance-name="activeTab?.instanceName ?? ''"
+        :source-bucket="activeTab?.selectedBucket ?? ''"
+        :source-prefix="activeTab?.currentPrefix ?? ''"
+        :selected-keys="activeTab?.selectedKeys ?? new Set<string>()"
+        :selected-prefixes="activeTab?.selectedPrefixes ?? new Set<string>()"
+        :single-target="singleTarget"
+        @complete="onCopyMoveComplete"
+      />
+
+      <!-- ==================== 删除确认弹窗 ==================== -->
+      <NuxtModal v-model:open="deleteModalOpen" :dismissible="!deleteLoading">
+        <template #header>
+          <div class="flex items-center gap-2">
+            <NuxtIcon
+              :name="isHighRisk ? 'i-lucide-shield-alert' : 'i-lucide-triangle-alert'"
+              :class="isHighRisk ? 'text-error' : 'text-warning'"
+              class="size-5"
+            />
+            <span class="text-highlighted font-semibold">
+              {{ isHighRisk ? '⚠️ 高危操作确认' : '确认删除' }}
+            </span>
+          </div>
+        </template>
+        <template #body>
+          <!-- 高危场景 -->
+          <div v-if="isHighRisk" class="flex flex-col gap-3">
+            <p class="text-muted">
+              你即将清空
+              <span class="text-error font-semibold">{{ activeTab?.selectedBucket }}</span>
+              的全部内容。此操作不可撤销。
+            </p>
+            <p class="text-muted">请输入 bucket 名称以确认：</p>
+            <NuxtInput
+              v-model="deleteConfirmInput"
+              :placeholder="activeTab?.selectedBucket"
+              class="w-full"
+            />
+            <p class="text-muted text-xs">
+              （输入的名称必须与 {{ activeTab?.selectedBucket }} 完全一致）
+            </p>
+          </div>
+
+          <!-- 普通删除 -->
+          <div v-else class="flex flex-col gap-3">
+            <p class="text-muted">
+              将要删除以下 {{ deleteItems.length }} 个项目：
+            </p>
+            <div class="bg-elevated max-h-60 overflow-y-auto rounded-md p-3">
+              <div
+                v-for="(item, idx) in deleteItems"
+                :key="idx"
+                class="flex items-center gap-2 py-1 text-sm"
+              >
+                <NuxtIcon
+                  :name="item.isFolder ? 'i-lucide-folder' : 'i-lucide-file'"
+                  :class="item.isFolder ? 'text-primary' : 'text-muted'"
+                  class="size-4 shrink-0"
+                />
+                <span class="truncate font-mono">{{ item.name }}</span>
+                <span v-if="item.isFolder" class="text-warning ml-auto text-xs">递归删除</span>
+                <span v-else class="text-muted ml-auto text-xs">{{ formatSize(item.size) }}</span>
+              </div>
+            </div>
+            <div class="flex items-center gap-2 text-warning">
+              <NuxtIcon name="i-lucide-triangle-alert" class="size-4 shrink-0" />
+              <span class="text-sm">删除操作不可撤销</span>
+            </div>
+          </div>
+        </template>
+        <template #footer>
+          <div class="flex w-full justify-end gap-2">
+            <NuxtButton
+              color="neutral"
+              variant="ghost"
+              label="取消"
+              :disabled="deleteLoading"
+              @click="() => { deleteModalOpen = false }"
+            />
+            <NuxtButton
+              color="error"
+              :label="isHighRisk ? '确认清空' : '确认删除'"
+              :loading="deleteLoading"
+              :disabled="isHighRisk && !canConfirmHighRisk"
+              @click="onConfirmDelete"
+            />
+          </div>
+        </template>
+      </NuxtModal>
+    </template>
+  </NuxtDashboardPanel>
+</template>

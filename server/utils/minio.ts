@@ -6,7 +6,10 @@ import {
   GetObjectCommand,
   PutObjectCommand,
   CopyObjectCommand,
+  type DeleteObjectsCommandInput,
+  type DeleteObjectsCommandOutput,
 } from '@aws-sdk/client-s3'
+import type { FinalizeRequestMiddleware } from '@aws-sdk/types'
 import type { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
 import type { MinioInstance, ConnectivityResult } from '#shared/schemas/groups'
@@ -244,27 +247,25 @@ export async function deleteObjects(
 
     // MinIO 要求 Content-MD5 头，SDK v3 不自动添加
     // 通过 command 级 middleware 注入
-    command.middlewareStack.addRelativeTo(
-      (next: (args: Record<string, unknown>) => Promise<Record<string, unknown>>) =>
-        async (args: Record<string, unknown>) => {
-          const req = args.request as
-            { body?: unknown; headers?: Record<string, string> } | undefined
-          if (req?.body) {
-            const bodyStr =
-              typeof req.body === 'string'
-                ? req.body
-                : new TextDecoder().decode(req.body as Uint8Array)
-            const md5 = createHash('md5').update(bodyStr).digest('base64')
-            req.headers = { ...(req.headers ?? {}), 'Content-MD5': md5 }
-          }
-          return next(args)
-        },
-      {
-        name: 'addContentMD5',
-        relation: 'before',
-        toMiddleware: 'awsAuthMiddleware',
-      },
-    )
+    const md5Middleware: FinalizeRequestMiddleware<DeleteObjectsCommandInput, DeleteObjectsCommandOutput> =
+      next => async (args) => {
+        const req = args.request as { body?: string | Uint8Array; headers?: Record<string, string> } | undefined
+        if (req?.body) {
+          const bodyStr =
+            typeof req.body === 'string'
+              ? req.body
+              : new TextDecoder().decode(req.body as Uint8Array)
+          const md5 = createHash('md5').update(bodyStr).digest('base64')
+          req.headers = { ...req.headers, 'Content-MD5': md5 }
+        }
+        return next(args)
+      }
+
+    command.middlewareStack.addRelativeTo(md5Middleware, {
+      name: 'addContentMD5',
+      relation: 'before',
+      toMiddleware: 'awsAuthMiddleware',
+    })
 
     const res = await client.send(command, { requestTimeout: 30000 })
 

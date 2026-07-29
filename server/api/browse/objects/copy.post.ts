@@ -1,5 +1,9 @@
 import { getGroups } from '#server/utils/store'
-import { copyObjectStream, collectObjectsByPrefixes, inferContentType } from '#server/utils/minio'
+import {
+  copyObjectStream,
+  collectObjectsByPrefixes,
+  inferContentType,
+} from '#server/utils/minio'
 import { createSSEStream } from '#server/utils/sse'
 import type { MinioInstance } from '#shared/schemas/groups'
 
@@ -81,6 +85,7 @@ export default defineEventHandler(async (event) => {
       let success = 0
       let failed = 0
       for (const key of keyArray) {
+        await sse.send({ key }, 'start')
         try {
           // 计算目标 key：源前缀剥离后拼接到目标前缀下
           const relativeKey =

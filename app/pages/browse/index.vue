@@ -1191,7 +1191,7 @@ function onCopyMoveComplete() {
       />
 
       <!-- 删除确认弹窗 -->
-      <NuxtModal v-model:open="deleteModalOpen" title="确认删除" :dismissible="!deleteLoading">
+      <NuxtModal v-model:open="deleteModalOpen" title="确认删除" :dismissible="false" :close="!deleteLoading">
         <template #body>
           <div class="flex flex-col gap-3">
             <p class="text-muted">将要删除以下 {{ deleteItems.length }} 个项目：</p>

@@ -4,6 +4,7 @@ import type { NavigationMenuItem } from '@nuxt/ui'
 const navItems = computed<NavigationMenuItem[]>(() => [
   { label: '实例管理', icon: 'i-lucide-server', to: '/manage' },
   { label: '实例访问', icon: 'i-lucide-folder-open', to: '/browse' },
+  { label: '文件分发', icon: 'i-lucide-send', to: '/dispatch' },
 ])
 </script>
 

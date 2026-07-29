@@ -4,17 +4,36 @@
  *
  * 三阶段：选择目标 -> 进度 -> 完成
  * 复制和移动共用同一套 UI，移动完成后增加删除源对象步骤。
- * 进度通过全局 useTransferTask composable 管理（useState），支持后台运行 + 跨页面恢复。
+ * 进度通过 SSE 实时推送（fetch 流式读取）。
+ * 执行期间弹窗不可关闭，与上传弹窗行为一致。
  */
 
 import type { InstanceGroup } from '#shared/schemas/groups'
-import type { TransferEndpoint } from '#shared/schemas/transfer'
 
 interface CopyTarget {
   instanceId: string
   instanceName: string
   bucket: string
   prefix: string
+}
+
+interface ProgressItem {
+  key: string
+  name: string
+  status: 'pending' | 'success' | 'failed'
+  error?: string
+  sourceDeleted?: 'deleted' | 'delete-failed'
+  sourceError?: string
+}
+
+interface TargetProgress {
+  target: CopyTarget
+  items: ProgressItem[]
+  completed: number
+  total: number
+  deletingSource: boolean
+  sourceDeleted?: number
+  sourceDeleteFailed?: number
 }
 
 const props = defineProps<{
@@ -36,25 +55,9 @@ const emit = defineEmits<{
 }>()
 
 const toast = useToast()
-const { activeTask, startTransfer: startTransferTask, resumeTask, clearTask } = useTransferTask()
 
-/** 弹窗当前阶段：有全局任务时跟随任务阶段，否则 select */
-type Phase = 'select' | 'scanning' | 'progress' | 'deleting' | 'done'
-const phase = computed<Phase>(() => {
-  if (!activeTask.value || activeTask.value.type !== props.mode) return 'select'
-  switch (activeTask.value.phase) {
-    case 'scanning': return 'scanning'
-    case 'progress': return 'progress'
-    case 'deleting': return 'deleting'
-    case 'done': return 'done'
-    default: return 'select'
-  }
-})
-
-/** 是否有正在进行的任务（控制弹窗不可关闭） */
-const isRunning = computed(() =>
-  phase.value === 'scanning' || phase.value === 'progress' || phase.value === 'deleting',
-)
+type Phase = 'select' | 'scanning' | 'progress' | 'done'
+const phase = ref<Phase>('select')
 
 // ==================== 选择阶段 ====================
 
@@ -106,11 +109,9 @@ const isSamePath = computed(
     targetPrefix.value.trim() === props.sourcePrefix,
 )
 
-const canSubmit = computed(() => {
-  // 有全局任务进行中时禁止提交
-  if (activeTask.value && activeTask.value.phase !== 'done') return false
-  return sourceSelectedCount.value > 0 && validTargets.value.length > 0 && !isSamePath.value
-})
+const canSubmit = computed(
+  () => sourceSelectedCount.value > 0 && validTargets.value.length > 0 && !isSamePath.value,
+)
 
 function isSourceInstance(instanceId: string): boolean {
   return instanceId === props.sourceInstanceId
@@ -139,13 +140,16 @@ watch(targetInstanceId, async (id) => {
   }
 })
 
-// ==================== 进度阶段（读全局状态） ====================
+// ==================== 进度阶段 ====================
 
+const totalObjects = ref(0)
+const targetProgress = ref<TargetProgress[]>([])
 const progressExpanded = ref<Record<string, boolean>>({})
 
-const totalObjects = computed(() => activeTask.value?.total ?? 0)
-const totalCompleted = computed(() => activeTask.value?.completed ?? 0)
-const totalItems = computed(() => activeTask.value?.total ?? 0)
+const totalCompleted = computed(() =>
+  targetProgress.value.reduce((sum, tp) => sum + tp.completed, 0),
+)
+const totalItems = computed(() => targetProgress.value.reduce((sum, tp) => sum + tp.total, 0))
 
 const progressPercent = computed(() => {
   const total = totalItems.value
@@ -153,62 +157,12 @@ const progressPercent = computed(() => {
   return (totalCompleted.value / total) * 100
 })
 
-
-/** 进度项列表（从全局 task.results 映射） */
-const progressItems = computed(() => activeTask.value?.results ?? [])
-const deletingSource = computed(() => activeTask.value?.deletingSource ?? false)
-
-const failedItems = computed(() => {
-  if (!activeTask.value) return []
-  return activeTask.value.results
-    .filter((r) => r.status === 'failed')
-    .map((r) => ({
-      target: `${activeTask.value!.target.instanceName} / ${activeTask.value!.target.bucket}`,
-      name: r.name,
-      error: r.error ?? '未知错误',
-    }))
-})
-
-/** 完成时的 toast 通知 */
-const doneToastShown = ref(false)
-watch(phase, (p) => {
-  if (p === 'done' && !doneToastShown.value) {
-    doneToastShown.value = true
-    const task = activeTask.value!
-    const actionLabel = task.type === 'copy' ? '复制' : '移动'
-    if (task.failed > 0) {
-      toast.add({
-        title: `${actionLabel}完成：${task.success} 成功，${task.failed} 失败`,
-        color: 'warning',
-      })
-    } else {
-      toast.add({
-        title: `${actionLabel}完成：${task.success} 个对象`,
-        color: 'success',
-      })
-    }
-  }
-  if (p === 'select') {
-    doneToastShown.value = false
-  }
-})
-
-// ==================== 执行 ====================
+// ==================== 执行（SSE） ====================
 
 async function startTransfer() {
-  const target = validTargets.value[0]!
-  const source: TransferEndpoint = {
-    instanceId: props.sourceInstanceId,
-    instanceName: props.sourceInstanceName,
-    bucket: props.sourceBucket,
-    prefix: props.sourcePrefix,
-  }
-  const targetEndpoint: TransferEndpoint = {
-    instanceId: target.instanceId,
-    instanceName: target.instanceName,
-    bucket: target.bucket,
-    prefix: target.prefix,
-  }
+  phase.value = 'scanning'
+  totalObjects.value = 0
+  targetProgress.value = []
 
   const body = {
     sourceInstanceId: props.sourceInstanceId,
@@ -221,59 +175,229 @@ async function startTransfer() {
     targetPrefix: targetPrefix.value.trim(),
   }
 
+  // 用 fetch + POST 发起 SSE（EventSource 只支持 GET，这里用 fetch 流式读取）
   try {
-    await startTransferTask(props.mode, body, { source, target: targetEndpoint })
+    const res = await fetch(`/api/browse/objects/${props.mode}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}))
+      throw new Error(err.statusMessage || `HTTP ${res.status}`)
+    }
+
+    // 初始化进度数据
+    const target = validTargets.value[0]!
+    targetProgress.value = [
+      {
+        target,
+        items: [],
+        completed: 0,
+        total: 0,
+        deletingSource: false,
+      },
+    ]
     progressExpanded.value[target.instanceId] = true
-  } catch {
+    phase.value = 'progress'
+
+    // 读取 SSE 流
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('无法读取响应流')
+
+    const decoder = new TextDecoder()
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+
+      // 解析 SSE 事件（以双换行分隔）
+      const events = buffer.split('\n\n')
+      buffer = events.pop() ?? ''
+
+      for (const evt of events) {
+        const lines = evt.split('\n')
+        let eventName = ''
+        let eventData = ''
+        for (const line of lines) {
+          if (line.startsWith('event: ')) eventName = line.slice(7)
+          else if (line.startsWith('data: ')) eventData = line.slice(6)
+        }
+        if (!eventData) continue
+        try {
+          const data = JSON.parse(eventData)
+          handleSSEEvent(eventName, data)
+        } catch {
+          // 忽略解析错误
+        }
+      }
+    }
+
+    // 流结束后，如果还没收到 done 事件，标记完成
+    if (phase.value === 'progress') {
+      finishTransfer()
+    }
+  } catch (e: unknown) {
+    const err = e instanceof Error ? e.message : '请求失败'
     toast.add({
       title: `${props.mode === 'copy' ? '复制' : '移动'}失败`,
+      description: err,
       color: 'error',
+    })
+    phase.value = 'select'
+  }
+}
+
+function handleSSEEvent(eventName: string, data: unknown) {
+  const tp = targetProgress.value[0]
+  if (!tp) return
+
+  switch (eventName) {
+    case 'total': {
+      tp.total = (data as { total: number }).total
+      totalObjects.value = tp.total
+      break
+    }
+    case 'start': {
+      const p = data as { key: string }
+      const existing = tp.items.find((i) => i.key === p.key)
+      if (!existing) {
+        tp.items.push({
+          key: p.key,
+          name: p.key.split('/').pop() ?? p.key,
+          status: 'pending',
+        })
+      }
+      break
+    }
+    case 'progress': {
+      const p = data as { key: string; status: string; error?: string }
+      const existing = tp.items.find((i) => i.key === p.key)
+      if (existing) {
+        existing.status = p.status as 'success' | 'failed'
+        existing.error = p.error
+      } else {
+        tp.items.push({
+          key: p.key,
+          name: p.key.split('/').pop() ?? p.key,
+          status: p.status as 'success' | 'failed',
+          error: p.error,
+        })
+      }
+      if (p.status === 'success') tp.completed++
+      break
+    }
+    case 'deleting': {
+      tp.deletingSource = true
+      break
+    }
+    case 'source-deleted': {
+      const p = data as { key: string; status: string; error?: string }
+      const existing = tp.items.find((i) => i.key === p.key)
+      if (existing) {
+        if (p.status === 'success') {
+          existing.sourceDeleted = 'deleted'
+        } else {
+          existing.sourceDeleted = 'delete-failed'
+          existing.sourceError = p.error
+        }
+      }
+      break
+    }
+    case 'done': {
+      const d = data as {
+        success: number
+        failed: number
+        sourceDeleted?: number
+        sourceDeleteFailed?: number
+      }
+      tp.completed = d.success
+      tp.deletingSource = false
+      tp.sourceDeleted = d.sourceDeleted
+      tp.sourceDeleteFailed = d.sourceDeleteFailed
+      finishTransfer(d)
+      break
+    }
+    case 'error': {
+      const d = data as { message: string }
+      toast.add({ title: '错误', description: d.message, color: 'error' })
+      phase.value = 'select'
+      break
+    }
+  }
+}
+
+function finishTransfer(result?: { success: number; failed: number }) {
+  phase.value = 'done'
+  const tp = targetProgress.value[0]
+  if (!tp) return
+  const failed = result?.failed ?? tp.items.filter((i) => i.status === 'failed').length
+  const success = result?.success ?? tp.items.filter((i) => i.status === 'success').length
+  const actionLabel = props.mode === 'copy' ? '复制' : '移动'
+  if (failed > 0) {
+    toast.add({
+      title: `${actionLabel}完成：${success} 成功，${failed} 失败`,
+      color: 'warning',
+    })
+  } else {
+    toast.add({
+      title: `${actionLabel}完成：${success} 个对象`,
+      color: 'success',
     })
   }
 }
 
-// ==================== 后台运行 ====================
-
-function runInBackground() {
-  emit('update:open', false)
-}
-
 // ==================== 完成/关闭 ====================
+
+const isRunning = computed(() =>
+  phase.value === 'scanning' || phase.value === 'progress',
+)
+
+const failedItems = computed(() => {
+  const items: { target: string; name: string; error: string }[] = []
+  for (const tp of targetProgress.value) {
+    for (const item of tp.items) {
+      if (item.status === 'failed') {
+        items.push({
+          target: `${tp.target.instanceName} / ${tp.target.bucket}`,
+          name: item.name,
+          error: item.error ?? '未知错误',
+        })
+      }
+    }
+  }
+  return items
+})
 
 function onClose() {
   if (phase.value === 'done') {
     emit('complete')
-    clearTask()
   }
-  targetInstanceId.value = ''
-  targetBucket.value = ''
-  targetPrefix.value = ''
   emit('update:open', false)
 }
 
-function cancelTransfer() {
-  // 取消只是关闭弹窗，任务在后端继续执行
-  // 用户可通过悬浮指示器恢复
-  emit('update:open', false)
+function retryFailed() {
+  for (const item of targetProgress.value[0]?.items ?? []) {
+    if (item.status === 'failed') {
+      item.status = 'pending'
+    }
+  }
+  targetProgress.value[0]!.completed = 0
+  phase.value = 'select'
 }
 
-/** 弹窗打开时：如果有全局任务在跑，恢复 SSE 订阅 */
 watch(
   () => props.open,
   (open) => {
     if (open) {
-      if (activeTask.value && activeTask.value.phase !== 'done') {
-        // 恢复已有任务的 SSE
-        resumeTask()
-      } else if (!activeTask.value || activeTask.value.phase === 'done') {
-        // 没有任务或已完成，重置选择阶段
-        if (activeTask.value?.phase === 'done') {
-          clearTask()
-        }
-        targetInstanceId.value = ''
-        targetBucket.value = ''
-        targetPrefix.value = ''
-      }
+      phase.value = 'select'
+      targetInstanceId.value = ''
+      targetBucket.value = ''
+      targetPrefix.value = ''
+      targetProgress.value = []
     }
   },
 )
@@ -287,7 +411,8 @@ const actionLabel = computed(() => (props.mode === 'copy' ? '开始复制' : '�
     <NuxtModal
       :open="open"
       :title="titleText"
-      :dismissible="!isRunning"
+      :dismissible="false"
+      :close="!isRunning"
       :ui="{ content: 'w-[calc(100vw-2rem)] max-w-2xl' }"
       @update:open="
         (v: boolean) => {
@@ -380,114 +505,154 @@ const actionLabel = computed(() => (props.mode === 'copy' ? '开始复制' : '�
           </div>
         </div>
 
-        <!-- 扫描阶段 -->
-        <div v-else-if="phase === 'scanning'" class="flex flex-col gap-3">
-          <div class="flex items-center gap-2 py-4">
+        <!-- 进度阶段 -->
+        <div v-else-if="phase === 'scanning' || phase === 'progress'" class="flex flex-col gap-3">
+          <div v-if="phase === 'scanning'" class="flex items-center gap-2 py-4">
             <NuxtIcon name="i-lucide-loader-circle" class="text-primary size-5 animate-spin" />
             <span class="text-sm">扫描中...</span>
           </div>
-        </div>
 
-        <!-- 进度阶段 -->
-        <div v-else-if="phase === 'progress' || phase === 'deleting'" class="flex flex-col gap-3">
-          <div class="text-muted text-sm">
-            {{ activeTask?.source.instanceName }} / {{ activeTask?.source.bucket }}
-            ->
-            {{ activeTask?.target.instanceName }} / {{ activeTask?.target.bucket }}
-          </div>
-
-          <div class="text-muted text-sm">共 {{ totalObjects }} 个对象</div>
-
-          <div class="flex items-center gap-2">
-            <div class="bg-default h-2 flex-1 overflow-hidden rounded-full">
-              <div
-                class="bg-primary h-full transition-all"
-                :style="{ width: `${progressPercent}%` }"
-              />
+          <template v-else>
+            <!-- 源 -> 目标路径 -->
+            <div class="bg-elevated rounded-md p-3">
+              <div class="text-muted text-xs">源</div>
+              <div class="text-highlighted font-mono text-sm">
+                {{ sourceInstanceName }} / {{ sourceBucket }} / {{ sourcePrefix || '(根目录)' }}
+              </div>
+              <div class="text-muted mt-2 text-xs">目标</div>
+              <div class="text-highlighted font-mono text-sm">
+                {{ targetProgress[0]?.target.instanceName }} / {{ targetProgress[0]?.target.bucket }} / {{ targetProgress[0]?.target.prefix || '(根目录)' }}
+              </div>
             </div>
-            <span class="text-muted text-xs">{{ totalCompleted }}/{{ totalItems }}</span>
-          </div>
 
-          <div class="bg-elevated max-h-72 overflow-y-auto rounded-md p-2">
-            <div class="mb-2">
-              <button
-                class="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left"
-                @click="progressExpanded[activeTask!.target.instanceId] = !progressExpanded[activeTask!.target.instanceId]"
-              >
-                <NuxtIcon
-                  :name="progressExpanded[activeTask!.target.instanceId] ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
-                  class="text-muted size-4"
-                />
-                <NuxtIcon name="i-lucide-server" class="text-muted size-4" />
-                <span class="text-sm font-medium">
-                  {{ activeTask?.target.instanceName }} / {{ activeTask?.target.bucket }}
-                </span>
-                <span class="text-muted ml-auto text-xs">{{ totalCompleted }}/{{ totalItems }}</span>
-              </button>
+            <div class="text-muted text-sm">共 {{ totalObjects }} 个对象</div>
 
-              <div v-show="progressExpanded[activeTask!.target.instanceId]" class="ml-6">
+            <div class="flex items-center gap-2">
+              <div class="bg-default h-2 flex-1 overflow-hidden rounded-full">
                 <div
-                  v-for="item in progressItems"
-                  :key="item.key"
-                  class="flex items-center gap-2 py-1 text-xs"
+                  class="bg-primary h-full transition-all"
+                  :style="{ width: `${progressPercent}%` }"
+                />
+              </div>
+              <span class="text-muted text-xs">{{ totalCompleted }}/{{ totalItems }}</span>
+            </div>
+
+            <div class="bg-elevated max-h-72 overflow-y-auto rounded-md p-2">
+              <div v-for="tp in targetProgress" :key="tp.target.instanceId" class="mb-2">
+                <div class="ml-2">
+                  <div
+                    v-for="item in tp.items"
+                    :key="item.key"
+                    class="flex items-center gap-2 py-1 text-xs"
+                  >
+                    <span class="truncate font-mono">{{ item.name }}</span>
+                    <div class="ml-auto flex shrink-0 items-center gap-3">
+                      <!-- 复制状态 -->
+                      <span v-if="item.status === 'success'" class="text-success flex items-center gap-0.5">
+                        复制 <NuxtIcon name="i-lucide-check" class="size-3" />
+                      </span>
+                      <span v-else-if="item.status === 'failed'" class="text-error flex items-center gap-0.5" :title="item.error">
+                        复制 <NuxtIcon name="i-lucide-x" class="size-3" />
+                      </span>
+                      <span v-else class="text-primary flex items-center gap-0.5">
+                        复制 <NuxtIcon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+                      </span>
+                      <!-- 移动专用：删源状态 -->
+                      <template v-if="mode === 'move'">
+                        <span v-if="item.sourceDeleted === 'deleted'" class="text-muted flex items-center gap-0.5">
+                          删源 <NuxtIcon name="i-lucide-check" class="size-3" />
+                        </span>
+                        <span v-else-if="item.sourceDeleted === 'delete-failed'" class="text-error flex items-center gap-0.5" :title="item.sourceError">
+                          删源 <NuxtIcon name="i-lucide-x" class="size-3" />
+                        </span>
+                        <span v-else-if="item.status === 'success'" class="text-muted flex items-center gap-0.5">
+                          删源 <NuxtIcon name="i-lucide-loader-circle" class="size-3 animate-spin" />
+                        </span>
+                        <span v-else class="text-muted flex items-center gap-0.5">
+                          删源 <NuxtIcon name="i-lucide-minus" class="size-3" />
+                        </span>
+                      </template>
+                    </div>
+                  </div>
+                </div>
+
+                <div
+                  v-if="tp.deletingSource"
+                  class="text-warning ml-6 flex items-center gap-1 py-1 text-xs"
                 >
-                  <NuxtIcon
-                    v-if="item.status === 'success'"
-                    name="i-lucide-check"
-                    class="text-success size-3.5 shrink-0"
-                  />
-                  <NuxtIcon
-                    v-else
-                    name="i-lucide-x"
-                    class="text-error size-3.5 shrink-0"
-                  />
-                  <span class="truncate font-mono">{{ item.name }}</span>
-                  <span
-                    v-if="item.status === 'failed'"
-                    class="text-error ml-auto truncate"
-                    :title="item.error"
-                  >{{ item.error }}</span>
+                  <NuxtIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
+                  <span>复制完成，正在删除源对象...</span>
                 </div>
               </div>
-
-              <div
-                v-if="deletingSource"
-                class="text-warning ml-6 flex items-center gap-1 py-1 text-xs"
-              >
-                <NuxtIcon name="i-lucide-loader-circle" class="size-3.5 animate-spin" />
-                <span>复制完成，正在删除源对象...</span>
-              </div>
             </div>
-          </div>
+          </template>
         </div>
 
         <!-- 完成阶段 -->
         <div v-else-if="phase === 'done'" class="flex flex-col gap-3">
+          <!-- 源 -> 目标路径 -->
+          <div class="bg-elevated rounded-md p-3">
+            <div class="text-muted text-xs">源</div>
+            <div class="text-highlighted font-mono text-sm">
+              {{ sourceInstanceName }} / {{ sourceBucket }} / {{ sourcePrefix || '(根目录)' }}
+            </div>
+            <div class="text-muted mt-2 text-xs">目标</div>
+            <div class="text-highlighted font-mono text-sm">
+              {{ targetProgress[0]?.target.instanceName }} / {{ targetProgress[0]?.target.bucket }} / {{ targetProgress[0]?.target.prefix || '(根目录)' }}
+            </div>
+          </div>
+
+          <!-- 汇总 -->
           <div class="flex items-center gap-2">
             <NuxtIcon name="i-lucide-check-circle" class="text-success size-5 shrink-0" />
             <span class="text-sm">
-              {{ activeTask?.target.instanceName }} / {{ activeTask?.target.bucket }}
-              <span class="text-muted">
-                {{ activeTask?.success }}/{{ activeTask?.total }} 成功
+              <span class="text-muted">共 {{ totalObjects }} 个对象，</span>
+              <span class="text-success">{{ totalCompleted }} 成功</span>
+              <span v-if="totalItems - totalCompleted > 0" class="text-error">
+                ，{{ totalItems - totalCompleted }} 失败
               </span>
-              <span v-if="(activeTask?.failed ?? 0) > 0" class="text-error">
-                ，{{ activeTask?.failed }} 失败
-              </span>
+              <template v-if="mode === 'move' && targetProgress[0]?.sourceDeleted !== undefined">
+                <span class="text-muted">，删源 </span>
+                <span class="text-success">{{ targetProgress[0]?.sourceDeleted }} 成功</span>
+                <span v-if="(targetProgress[0]?.sourceDeleteFailed ?? 0) > 0" class="text-error">
+                  ，{{ targetProgress[0]?.sourceDeleteFailed }} 失败
+                </span>
+              </template>
             </span>
           </div>
 
-          <div v-if="failedItems.length > 0" class="flex flex-col gap-1">
-            <div class="text-muted text-sm font-medium">失败项：</div>
-            <div class="bg-elevated max-h-40 overflow-y-auto rounded-md p-2">
-              <div
-                v-for="(item, idx) in failedItems"
-                :key="idx"
-                class="flex items-center gap-2 py-1 text-xs"
-              >
-                <NuxtIcon name="i-lucide-x" class="text-error size-3.5 shrink-0" />
-                <span class="truncate font-mono">{{ item.name }}</span>
-                <span class="text-muted shrink-0">{{ item.target }}</span>
-                <span class="text-error ml-auto shrink-0">{{ item.error }}</span>
+          <!-- 完整文件列表 -->
+          <div class="bg-elevated max-h-72 overflow-y-auto rounded-md p-2">
+            <div v-for="tp in targetProgress" :key="tp.target.instanceId" class="mb-2">
+              <div class="ml-2">
+                <div
+                  v-for="item in tp.items"
+                  :key="item.key"
+                  class="flex items-center gap-2 py-1 text-xs"
+                >
+                  <span class="truncate font-mono">{{ item.name }}</span>
+                  <div class="ml-auto flex shrink-0 items-center gap-3">
+                    <!-- 复制状态 -->
+                    <span v-if="item.status === 'success'" class="text-success flex items-center gap-0.5">
+                      复制 <NuxtIcon name="i-lucide-check" class="size-3" />
+                    </span>
+                    <span v-else class="text-error flex items-center gap-0.5" :title="item.error">
+                      复制 <NuxtIcon name="i-lucide-x" class="size-3" />
+                    </span>
+                    <!-- 移动专用：删源状态 -->
+                    <template v-if="mode === 'move'">
+                      <span v-if="item.sourceDeleted === 'deleted'" class="text-muted flex items-center gap-0.5">
+                        删源 <NuxtIcon name="i-lucide-check" class="size-3" />
+                      </span>
+                      <span v-else-if="item.sourceDeleted === 'delete-failed'" class="text-error flex items-center gap-0.5" :title="item.sourceError">
+                        删源 <NuxtIcon name="i-lucide-x" class="size-3" />
+                      </span>
+                      <span v-else class="text-muted flex items-center gap-0.5">
+                        删源 <NuxtIcon name="i-lucide-minus" class="size-3" />
+                      </span>
+                    </template>
+                  </div>
+                </div>
               </div>
             </div>
           </div>
@@ -506,17 +671,30 @@ const actionLabel = computed(() => (props.mode === 'copy' ? '开始复制' : '�
               @click="startTransfer"
             />
           </template>
-          <template v-else-if="isRunning">
+          <!-- 执行中：loading 状态，不可操作 -->
+          <template v-else-if="phase === 'scanning' || phase === 'progress'">
             <NuxtButton
               color="neutral"
               variant="ghost"
-              icon="i-lucide-arrow-down-to-line"
-              label="后台运行"
-              @click="runInBackground"
+              label="取消"
+              disabled
             />
-            <NuxtButton color="neutral" variant="ghost" label="关闭" @click="cancelTransfer" />
+            <NuxtButton
+              color="primary"
+              :label="phase === 'scanning' ? '扫描中...' : (mode === 'copy' ? '复制中...' : '移动中...')"
+              loading
+              disabled
+            />
           </template>
           <template v-else-if="phase === 'done'">
+            <NuxtButton
+              v-if="failedItems.length > 0"
+              color="warning"
+              variant="outline"
+              icon="i-lucide-rotate-cw"
+              label="重试失败项"
+              @click="retryFailed"
+            />
             <NuxtButton color="primary" label="关闭" @click="onClose" />
           </template>
         </div>

@@ -86,6 +86,7 @@ export default defineEventHandler(async (event) => {
       let success = 0
       let failed = 0
       for (const key of keyArray) {
+        await sse.send({ key }, 'start')
         try {
           const relativeKey =
             body.sourcePrefix && key.startsWith(body.sourcePrefix)
@@ -121,12 +122,14 @@ export default defineEventHandler(async (event) => {
       if (copiedKeys.length > 0) {
         await sse.send({}, 'deleting')
 
-        // 分批删除（每批 1000 个）
-        for (let i = 0; i < copiedKeys.length; i += 1000) {
-          const batch = copiedKeys.slice(i, i + 1000)
-          const result = await deleteObjects(sourceInstance, body.sourceBucket, batch)
-          sourceDeleted += result.deleted.length
-          sourceDeleteFailed += result.errors.length
+        const result = await deleteObjects(sourceInstance, body.sourceBucket, copiedKeys)
+        for (const key of result.deleted) {
+          sourceDeleted++
+          await sse.send({ key, status: 'success' }, 'source-deleted')
+        }
+        for (const err of result.errors) {
+          sourceDeleteFailed++
+          await sse.send({ key: err.key, status: 'failed', error: err.error }, 'source-deleted')
         }
       }
 

@@ -137,7 +137,7 @@ export async function listBucketsWithMeta(instance: MinioInstance): Promise<{
 }
 
 /** ListObjectsV2 单页最大返回数（S3 上限 1000） */
-const LIST_MAX_KEYS = 1000
+const LIST_MAX_KEYS = 200
 
 /**
  * 清洗 objectKey / prefix，防止路径遍历。
@@ -231,9 +231,31 @@ export async function deleteObjects(
   keys: string[],
 ): Promise<DeleteObjectsResult> {
   if (!keys.length) return { deleted: [], errors: [] }
-  if (keys.length > 1000) {
-    return { deleted: [], errors: [{ key: '', error: '一次最多删除 1000 个对象' }] }
+
+  // 自动分批（每批 1000 个，S3 API 单次上限）
+  const allDeleted: string[] = []
+  const allErrors: { key: string; error: string }[] = []
+
+  for (let i = 0; i < keys.length; i += 1000) {
+    const batch = keys.slice(i, i + 1000)
+    const result = await deleteObjectsBatch(instance, bucket, batch)
+    allDeleted.push(...result.deleted)
+    allErrors.push(...result.errors)
   }
+
+  return { deleted: allDeleted, errors: allErrors }
+}
+
+/**
+ * 单次 DeleteMultipleObjects 调用（最多 1000 个 key）。
+ * 由 deleteObjects 和 deleteByPrefixes 内部调用。
+ */
+async function deleteObjectsBatch(
+  instance: MinioInstance,
+  bucket: string,
+  keys: string[],
+): Promise<DeleteObjectsResult> {
+  if (!keys.length) return { deleted: [], errors: [] }
 
   try {
     const client = createS3Client(instance)
@@ -323,13 +345,10 @@ export async function deleteByPrefixes(
     const prefixHasError = allErrors.some((e) => e.key === prefix)
     if (prefixHasError) continue
 
-    // 分批删除（每批 1000 个）
-    for (let i = 0; i < keys.length; i += 1000) {
-      const batch = keys.slice(i, i + 1000)
-      const result = await deleteObjects(instance, bucket, batch)
-      allDeleted.push(...result.deleted)
-      allErrors.push(...result.errors)
-    }
+    // deleteObjects 内部自动分批
+    const result = await deleteObjects(instance, bucket, keys)
+    allDeleted.push(...result.deleted)
+    allErrors.push(...result.errors)
   }
 
   return { deleted: allDeleted, errors: allErrors }

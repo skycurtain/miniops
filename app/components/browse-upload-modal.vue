@@ -228,7 +228,7 @@ function indentLevel(relativePath: string): number {
   <NuxtModal
     :open="open"
     :title="`上传到：${targetPath}`"
-    :dismissible="phase !== 'uploading'"
+    :dismissible="false"
     :close="phase !== 'uploading'"
     :ui="{ content: 'w-[calc(100vw-2rem)] max-w-2xl' }"
     @update:open="(v: boolean) => { if (!v && phase === 'uploading') return; emit('update:open', v) }"

@@ -431,6 +431,16 @@ const browseColumns: TableColumn<BrowseTableRow>[] = [
   },
 ]
 
+// ==================== 无限滚动 ====================
+function onTableScroll(e: Event) {
+  const tab = activeTab.value
+  if (!tab || !tab.hasMore || tab.loadingMore) return
+  const el = e.target as HTMLElement
+  if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+    loadMore(tab)
+  }
+}
+
 // ==================== 预览 ====================
 const previewOpen = ref(false)
 const previewKey = ref('')
@@ -1059,7 +1069,7 @@ function onCopyMoveComplete() {
                 </div>
 
                 <!-- 对象列表内容 -->
-                <div class="min-h-0 flex-1 flex flex-col px-2 py-1">
+                <div class="min-h-0 flex-1 flex flex-col px-2 py-1" @scroll.passive.capture="onTableScroll">
                   <div
                     v-if="activeTab.objectsLoading"
                     class="flex items-center justify-center py-12"
@@ -1234,17 +1244,18 @@ function onCopyMoveComplete() {
                       </template>
                     </NuxtTable>
 
-                    <!-- 加载更多 -->
-                    <div v-if="activeTab.hasMore" class="flex justify-center py-3">
-                      <NuxtButton
-                        size="sm"
-                        color="neutral"
-                        variant="outline"
-                        icon="i-lucide-chevron-down"
-                        label="加载更多"
-                        :loading="activeTab.loadingMore"
-                        @click="loadMore(activeTab)"
-                      />
+                    <!-- 加载状态提示 -->
+                    <div class="text-muted shrink-0 py-2 text-center text-xs">
+                      <template v-if="activeTab.loadingMore">
+                        <NuxtIcon name="i-lucide-loader-circle" class="size-3 animate-spin inline-block" />
+                        加载中...
+                      </template>
+                      <template v-else-if="activeTab.hasMore">
+                        滚动加载更多
+                      </template>
+                      <template v-else>
+                        共 {{ tableData.length }} 个对象
+                      </template>
                     </div>
                   </template>
                 </div>

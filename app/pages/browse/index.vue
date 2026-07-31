@@ -1324,7 +1324,8 @@ function onCopyMoveComplete() {
             <NuxtTable
               :data="deleteItems"
               :columns="deleteColumns"
-              virtualize
+              :virtualize="{ estimateSize: 36 }"
+              :ui="{ td: 'px-4 py-1.5 text-sm text-muted whitespace-nowrap' }"
               sticky
               class="h-[300px]"
             />
@@ -1344,7 +1345,8 @@ function onCopyMoveComplete() {
             <NuxtTable
               :data="deleteItems"
               :columns="deleteColumns"
-              virtualize
+              :virtualize="{ estimateSize: 36 }"
+              :ui="{ td: 'px-4 py-1.5 text-sm text-muted whitespace-nowrap' }"
               sticky
               class="h-[300px]"
             />
@@ -1365,7 +1367,8 @@ function onCopyMoveComplete() {
             <NuxtTable
               :data="deleteItems"
               :columns="deleteColumns"
-              virtualize
+              :virtualize="{ estimateSize: 36 }"
+              :ui="{ td: 'px-4 py-1.5 text-sm text-muted whitespace-nowrap' }"
               sticky
               class="h-[300px]"
             />

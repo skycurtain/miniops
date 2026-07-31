@@ -83,6 +83,15 @@ interface BrowseTab {
   selectedPrefixes: Set<string>
 }
 
+/** Table 行数据：文件夹和对象合并 */
+interface BrowseTableRow {
+  type: 'folder' | 'object'
+  key: string
+  name: string
+  size?: number
+  lastModified?: string
+}
+
 const tabs = ref<BrowseTab[]>([])
 const activeTabId = ref<string>('')
 
@@ -354,6 +363,73 @@ function toggleSelectPrefix(tab: BrowseTab, prefix: string) {
   else set.add(prefix)
   tab.selectedPrefixes = set
 }
+
+// ==================== Table 数据和列定义 ====================
+const tableData = computed<BrowseTableRow[]>(() => {
+  const tab = activeTab.value
+  if (!tab) return []
+  const folders: BrowseTableRow[] = tab.commonPrefixes.map(cp => ({
+    type: 'folder',
+    key: cp,
+    name: cp.replace(tab.currentPrefix, ''),
+  }))
+  const objects: BrowseTableRow[] = tab.objects.map(obj => ({
+    type: 'object',
+    key: obj.key,
+    name: displayName(obj.key, tab.currentPrefix),
+    size: obj.size,
+    lastModified: obj.lastModified,
+  }))
+  return [...folders, ...objects]
+})
+
+const NuxtCheckboxComponent = resolveComponent('NuxtCheckbox')
+
+const browseColumns: TableColumn<BrowseTableRow>[] = [
+  {
+    id: 'select',
+    header: () => {
+      const tab = activeTab.value
+      if (!tab) return h(NuxtCheckboxComponent, { disabled: true })
+      return h(NuxtCheckboxComponent, {
+        modelValue: isPartialSelected(tab) ? 'indeterminate' : isAllSelected(tab),
+        'onUpdate:modelValue': () => toggleSelectAll(tab),
+      })
+    },
+    cell: ({ row }) => {
+      const tab = activeTab.value
+      if (!tab) return null
+      const isSelected = row.original.type === 'folder'
+        ? tab.selectedPrefixes.has(row.original.key)
+        : tab.selectedKeys.has(row.original.key)
+      return h(NuxtCheckboxComponent, {
+        modelValue: isSelected,
+        'onUpdate:modelValue': () => {
+          if (row.original.type === 'folder')
+            toggleSelectPrefix(tab, row.original.key)
+          else
+            toggleSelectKey(tab, row.original.key)
+        },
+      })
+    },
+  },
+  {
+    id: 'name',
+    header: '名称',
+  },
+  {
+    id: 'size',
+    header: '大小',
+  },
+  {
+    id: 'lastModified',
+    header: '修改时间',
+  },
+  {
+    id: 'actions',
+    header: '',
+  },
+]
 
 // ==================== 预览 ====================
 const previewOpen = ref(false)
@@ -983,7 +1059,7 @@ function onCopyMoveComplete() {
                 </div>
 
                 <!-- 对象列表内容 -->
-                <div class="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+                <div class="min-h-0 flex-1 flex flex-col px-2 py-1">
                   <div
                     v-if="activeTab.objectsLoading"
                     class="flex items-center justify-center py-12"
@@ -1025,145 +1101,141 @@ function onCopyMoveComplete() {
                   </div>
 
                   <!-- 列表 -->
-                  <div v-else class="flex flex-col gap-0.5 select-none">
-                    <!-- 虚拟文件夹 -->
-                    <div
-                      v-for="cp in activeTab.commonPrefixes"
-                      :key="`cp-${cp}`"
-                      class="group hover:bg-elevated flex items-center gap-3 rounded-md px-3 py-1.5 text-sm"
+                  <template v-else>
+                    <NuxtTable
+                      :data="tableData"
+                      :columns="browseColumns"
+                      :virtualize="{ estimateSize: 36 }"
+                      :ui="{
+                        tr: 'group',
+                        td: 'px-3 py-1.5 text-sm whitespace-nowrap',
+                        th: 'px-3 py-2 text-xs text-muted font-medium',
+                      }"
+                      sticky
+                      class="h-full"
                     >
-                      <NuxtCheckbox
-                        :model-value="activeTab.selectedPrefixes.has(cp)"
-                        @update:model-value="toggleSelectPrefix(activeTab, cp)"
-                      />
-                      <div
-                        class="flex min-w-0 flex-1 cursor-pointer items-center gap-2"
-                        @click="navigateToPrefix(activeTab, cp)"
-                      >
-                        <NuxtIcon name="i-lucide-folder" class="text-primary size-4 shrink-0" />
-                        <span class="truncate font-mono">{{
-                          cp.replace(activeTab.currentPrefix, '')
-                        }}</span>
-                      </div>
-                      <span class="text-muted w-20 shrink-0 text-right text-xs">-</span>
-                      <span class="text-muted w-36 shrink-0 text-right text-xs">-</span>
-                      <div
-                        class="flex w-32 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        <NuxtTooltip text="下载">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-download"
-                            @click="downloadSinglePrefix(cp)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="复制">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-copy"
-                            @click="openSinglePrefixCopy(cp)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="移动">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-folder-input"
-                            @click="openSinglePrefixMove(cp)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="删除">
-                          <NuxtButton
-                            size="xs"
-                            color="error"
-                            variant="ghost"
-                            icon="i-lucide-trash-2"
-                            @click="openSinglePrefixDelete(cp)"
-                          />
-                        </NuxtTooltip>
-                      </div>
-                    </div>
+                      <template #name-cell="{ row }">
+                        <div
+                          v-if="row.original.type === 'folder'"
+                          class="flex min-w-0 flex-1 cursor-pointer items-center gap-2"
+                          @click="navigateToPrefix(activeTab!, row.original.key)"
+                        >
+                          <NuxtIcon name="i-lucide-folder" class="text-primary size-4 shrink-0" />
+                          <span class="truncate font-mono">{{ row.original.name }}</span>
+                        </div>
+                        <div v-else class="flex min-w-0 flex-1 items-center gap-2">
+                          <NuxtIcon :name="fileIcon(row.original.key)" class="text-muted size-4 shrink-0" />
+                          <NuxtTooltip :text="row.original.key">
+                            <span class="truncate font-mono">{{ row.original.name }}</span>
+                          </NuxtTooltip>
+                        </div>
+                      </template>
 
-                    <!-- 对象 -->
-                    <div
-                      v-for="obj in activeTab.objects"
-                      :key="obj.key"
-                      class="group hover:bg-elevated flex items-center gap-3 rounded-md px-3 py-1.5 text-sm"
-                    >
-                      <NuxtCheckbox
-                        :model-value="activeTab.selectedKeys.has(obj.key)"
-                        @update:model-value="toggleSelectKey(activeTab, obj.key)"
-                      />
-                      <NuxtIcon :name="fileIcon(obj.key)" class="text-muted size-4 shrink-0" />
-                      <NuxtTooltip :text="obj.key">
-                        <span class="min-w-0 flex-1 truncate font-mono">
-                          {{ displayName(obj.key, activeTab.currentPrefix) }}
+                      <template #size-cell="{ row }">
+                        <span class="text-muted text-right text-xs">
+                          {{ row.original.size != null ? formatSize(row.original.size) : '-' }}
                         </span>
-                      </NuxtTooltip>
-                      <span class="text-muted w-20 shrink-0 text-right text-xs">{{
-                        formatSize(obj.size)
-                      }}</span>
-                      <span class="text-muted w-36 shrink-0 text-right text-xs">{{
-                        formatDate(obj.lastModified)
-                      }}</span>
-                      <div
-                        class="flex w-32 shrink-0 items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100"
-                      >
-                        <NuxtTooltip v-if="getPreviewType(obj.key)" text="预览">
-                          <NuxtButton
-                            size="xs"
-                            color="info"
-                            variant="ghost"
-                            icon="i-lucide-eye"
-                            @click="openPreview(obj.key)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="下载">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-download"
-                            @click="downloadObject(obj.key)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="复制">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-copy"
-                            @click="openSingleCopy(obj.key)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="移动">
-                          <NuxtButton
-                            size="xs"
-                            color="neutral"
-                            variant="ghost"
-                            icon="i-lucide-folder-input"
-                            @click="openSingleMove(obj.key)"
-                          />
-                        </NuxtTooltip>
-                        <NuxtTooltip text="删除">
-                          <NuxtButton
-                            size="xs"
-                            color="error"
-                            variant="ghost"
-                            icon="i-lucide-trash-2"
-                            @click="openSingleDelete(obj.key)"
-                          />
-                        </NuxtTooltip>
-                      </div>
-                    </div>
+                      </template>
+
+                      <template #lastModified-cell="{ row }">
+                        <span class="text-muted text-right text-xs">
+                          {{ row.original.lastModified ? formatDate(row.original.lastModified) : '-' }}
+                        </span>
+                      </template>
+
+                      <template #actions-cell="{ row }">
+                        <div class="flex items-center justify-end gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                          <template v-if="row.original.type === 'folder'">
+                            <NuxtTooltip text="下载">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-download"
+                                @click="downloadSinglePrefix(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="复制">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-copy"
+                                @click="openSinglePrefixCopy(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="移动">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-folder-input"
+                                @click="openSinglePrefixMove(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="删除">
+                              <NuxtButton
+                                size="xs"
+                                color="error"
+                                variant="ghost"
+                                icon="i-lucide-trash-2"
+                                @click="openSinglePrefixDelete(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                          </template>
+                          <template v-else>
+                            <NuxtTooltip v-if="getPreviewType(row.original.key)" text="预览">
+                              <NuxtButton
+                                size="xs"
+                                color="info"
+                                variant="ghost"
+                                icon="i-lucide-eye"
+                                @click="openPreview(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="下载">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-download"
+                                @click="downloadObject(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="复制">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-copy"
+                                @click="openSingleCopy(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="移动">
+                              <NuxtButton
+                                size="xs"
+                                color="neutral"
+                                variant="ghost"
+                                icon="i-lucide-folder-input"
+                                @click="openSingleMove(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                            <NuxtTooltip text="删除">
+                              <NuxtButton
+                                size="xs"
+                                color="error"
+                                variant="ghost"
+                                icon="i-lucide-trash-2"
+                                @click="openSingleDelete(row.original.key)"
+                              />
+                            </NuxtTooltip>
+                          </template>
+                        </div>
+                      </template>
+                    </NuxtTable>
 
                     <!-- 加载更多 -->
-                    <div v-if="activeTab.hasMore" class="flex justify-center pt-3">
+                    <div v-if="activeTab.hasMore" class="flex justify-center py-3">
                       <NuxtButton
                         size="sm"
                         color="neutral"
@@ -1174,7 +1246,7 @@ function onCopyMoveComplete() {
                         @click="loadMore(activeTab)"
                       />
                     </div>
-                  </div>
+                  </template>
                 </div>
               </div>
             </template>

@@ -217,8 +217,6 @@ export async function listObjects(
 
 // ===== 删除对象 =====
 
-/** 递归删除安全上限，防止误删超大规模文件夹导致长时间阻塞 */
-const RECURSIVE_DELETE_LIMIT = 10000
 
 /**
  * 批量删除对象（S3 DeleteMultipleObjects API）。
@@ -331,17 +329,9 @@ export async function deleteByPrefixes(
       }
       keys.push(...result.objects.map((o) => o.key))
       token = result.isTruncated ? result.continuationToken : undefined
-
-      if (keys.length > RECURSIVE_DELETE_LIMIT) {
-        allErrors.push({
-          key: prefix,
-          error: `文件夹下对象过多（>${RECURSIVE_DELETE_LIMIT}），请缩小范围后重试`,
-        })
-        break
-      }
     } while (token)
 
-    // 跳过因超限而中断的前缀
+    // 跳过因列出失败而中断的前缀
     const prefixHasError = allErrors.some((e) => e.key === prefix)
     if (prefixHasError) continue
 
@@ -564,7 +554,7 @@ export async function collectObjectsByPrefixes(
       allKeys.push(...result.objects.map((o) => o.key))
       token = result.isTruncated ? result.continuationToken : undefined
 
-      if (allKeys.length > maxObjects) {
+      if (maxObjects > 0 && allKeys.length > maxObjects) {
         return {
           keys: [],
           error: `源对象超过 ${maxObjects} 个上限，请缩小范围`,

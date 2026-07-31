@@ -20,13 +20,13 @@ export default defineEventHandler(async (event) => {
   const inline = query.inline === '1' || query.inline === 'true'
 
   if (!instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
   if (!bucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 bucket' })
+    throw createError({ statusCode: 400, message: '缺少 bucket' })
   }
   if (!key) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 key' })
+    throw createError({ statusCode: 400, message: '缺少 key' })
   }
 
   // 从 store 查出实例
@@ -37,7 +37,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   // 读取浏览器的 Range 请求头
@@ -45,7 +45,7 @@ export default defineEventHandler(async (event) => {
 
   const { stream, metadata, error } = await getObjectStream(instance, bucket, key, rangeHeader)
   if (error || !stream || !metadata) {
-    throw createError({ statusCode: 502, statusMessage: error || '下载失败' })
+    throw createError({ statusCode: 502, message: error || '下载失败' })
   }
 
   // 文件名取 key 最后一段

@@ -24,13 +24,13 @@ export default defineEventHandler(async (event) => {
   }>(event)
 
   if (!body?.instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
   if (!body?.bucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 bucket' })
+    throw createError({ statusCode: 400, message: '缺少 bucket' })
   }
   if (!body?.keys?.length && !body?.prefixes?.length) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 keys 或 prefixes' })
+    throw createError({ statusCode: 400, message: '缺少 keys 或 prefixes' })
   }
 
   // 从 store 查出实例
@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   // 1. 收集所有要打包的对象 key（keys + 递归列出 prefixes，去重）
@@ -52,7 +52,7 @@ export default defineEventHandler(async (event) => {
     do {
       const result = await listObjects(instance, body.bucket, prefix, '', token)
       if (result.error) {
-        throw createError({ statusCode: 502, statusMessage: `列出文件夹失败: ${result.error}` })
+        throw createError({ statusCode: 502, message: `列出文件夹失败: ${result.error}` })
       }
       for (const o of result.objects) {
         allKeys.add(o.key)
@@ -65,7 +65,7 @@ export default defineEventHandler(async (event) => {
   if (allKeys.size > BATCH_DOWNLOAD_COUNT_LIMIT) {
     throw createError({
       statusCode: 400,
-      statusMessage: `选中内容过多（${allKeys.size} 个对象 > ${BATCH_DOWNLOAD_COUNT_LIMIT}），请缩小范围`,
+      message: `选中内容过多（${allKeys.size} 个对象 > ${BATCH_DOWNLOAD_COUNT_LIMIT}），请缩小范围`,
     })
   }
 
@@ -95,7 +95,7 @@ export default defineEventHandler(async (event) => {
     await archive.finalize()
   } catch (e: unknown) {
     const err = e as { message?: string }
-    throw createError({ statusCode: 502, statusMessage: err?.message || '打包失败' })
+    throw createError({ statusCode: 502, message: err?.message || '打包失败' })
   } finally {
     clearTimeout(timer)
   }

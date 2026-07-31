@@ -10,12 +10,12 @@ export default defineEventHandler(async (event) => {
   if (!res.success) {
     throw createError({
       statusCode: 400,
-      statusMessage: res.issues[0]?.message || '请求参数校验失败',
+      message: res.issues[0]?.message || '请求参数校验失败',
     })
   }
   const instance = await updateInstance(id, instanceId, res.output)
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '实例不存在' })
+    throw createError({ statusCode: 404, message: '实例不存在' })
   }
   return instance
 })

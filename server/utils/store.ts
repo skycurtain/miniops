@@ -121,8 +121,8 @@ export async function deleteGroup(id: string): Promise<void> {
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === id)
-    if (!group) throw createError({ statusCode: 404, statusMessage: '分组不存在' })
-    if (group.isDefault) throw createError({ statusCode: 400, statusMessage: '默认分组不可删除' })
+    if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
+    if (group.isDefault) throw createError({ statusCode: 400, message: '默认分组不可删除' })
     const filtered = groups.filter((g) => g.id !== id)
     await writeRaw(filtered)
   })
@@ -137,7 +137,7 @@ export async function addInstance(
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
-    if (!group) throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
     const instance: MinioInstance = {
       id: generateInstanceId(),
       groupId,
@@ -158,9 +158,9 @@ export async function updateInstance(
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
-    if (!group) throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
     const instance = group.instances.find((i) => i.id === instanceId)
-    if (!instance) throw createError({ statusCode: 404, statusMessage: '实例不存在' })
+    if (!instance) throw createError({ statusCode: 404, message: '实例不存在' })
     Object.assign(instance, input)
     group.updatedAt = new Date().toISOString()
     await writeRaw(groups)
@@ -172,7 +172,7 @@ export async function deleteInstance(groupId: string, instanceId: string): Promi
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
-    if (!group) throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
     group.instances = group.instances.filter((i) => i.id !== instanceId)
     group.updatedAt = new Date().toISOString()
     await writeRaw(groups)
@@ -186,9 +186,9 @@ export async function duplicateInstance(
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
-    if (!group) throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
     const source = group.instances.find((i) => i.id === instanceId)
-    if (!source) throw createError({ statusCode: 404, statusMessage: '实例不存在' })
+    if (!source) throw createError({ statusCode: 404, message: '实例不存在' })
     const copy: MinioInstance = {
       ...source,
       id: generateInstanceId(),

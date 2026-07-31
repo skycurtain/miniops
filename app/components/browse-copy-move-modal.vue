@@ -185,7 +185,7 @@ async function startTransfer() {
 
     if (!res.ok) {
       const err = await res.json().catch(() => ({}))
-      throw new Error(err.statusMessage || `HTTP ${res.status}`)
+      throw new Error(err.message || `HTTP ${res.status}`)
     }
 
     // 初始化进度数据

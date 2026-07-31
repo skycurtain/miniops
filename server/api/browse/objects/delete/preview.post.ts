@@ -18,13 +18,13 @@ export default defineEventHandler(async (event) => {
   }>(event)
 
   if (!body?.instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
   if (!body?.bucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 bucket' })
+    throw createError({ statusCode: 400, message: '缺少 bucket' })
   }
   if (!body?.keys?.length && !body?.prefixes?.length) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 keys 或 prefixes' })
+    throw createError({ statusCode: 400, message: '缺少 keys 或 prefixes' })
   }
 
   // 从 store 查出实例
@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   // 收集全部 key（不设上限）
@@ -44,7 +44,7 @@ export default defineEventHandler(async (event) => {
   if (body.prefixes?.length) {
     const { keys, error } = await collectObjectsByPrefixes(instance, body.bucket, body.prefixes, 0)
     if (error) {
-      throw createError({ statusCode: 502, statusMessage: error })
+      throw createError({ statusCode: 502, message: error })
     }
     for (const k of keys) allKeys.add(k)
   }

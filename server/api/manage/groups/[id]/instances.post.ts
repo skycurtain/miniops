@@ -9,7 +9,7 @@ export default defineEventHandler(async (event) => {
   if (!res.success) {
     throw createError({
       statusCode: 400,
-      statusMessage: res.issues[0]?.message || '请求参数校验失败',
+      message: res.issues[0]?.message || '请求参数校验失败',
     })
   }
   return await addInstance(id, res.output)

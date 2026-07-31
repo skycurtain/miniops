@@ -11,7 +11,7 @@ import type { MinioInstance } from '#shared/schemas/groups'
 export default defineEventHandler(async (event) => {
   const instanceId = getQuery(event).instanceId as string | undefined
   if (!instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
 
   // 从 store 查出实例
@@ -22,7 +22,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   return await listBucketsWithMeta(instance)

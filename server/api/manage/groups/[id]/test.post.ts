@@ -6,7 +6,7 @@ export default defineEventHandler(async (event) => {
   const id = getRouterParam(event, 'id')!
   const group = await getGroup(id)
   if (!group) {
-    throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    throw createError({ statusCode: 404, message: '分组不存在' })
   }
 
   const instanceId = getQuery(event).instanceId as string | undefined
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
     // 测试单个实例
     const instance = group.instances.find((i) => i.id === instanceId)
     if (!instance) {
-      throw createError({ statusCode: 404, statusMessage: '实例不存在' })
+      throw createError({ statusCode: 404, message: '实例不存在' })
     }
     const { testConnectivity } = await import('#server/utils/minio')
     results = [await testConnectivity(instance)]

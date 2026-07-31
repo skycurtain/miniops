@@ -264,8 +264,8 @@ async function loadObjects(tab: BrowseTab) {
     tab.hasMore = res.isTruncated
     tab.continuationToken = res.continuationToken
   } catch (e: unknown) {
-    const err = e as { data?: { statusMessage?: string }; message?: string }
-    tab.objectsError = err?.data?.statusMessage || err?.message || '加载失败'
+    const err = e as { data?: { message?: string }; message?: string }
+    tab.objectsError = err?.data?.message || err?.message || '加载失败'
   } finally {
     tab.objectsLoading = false
   }
@@ -552,10 +552,10 @@ async function downloadSelected() {
     URL.revokeObjectURL(url)
     toast.add({ title: `已下载 ${count} 项（ZIP 打包）`, color: 'success' })
   } catch (e: unknown) {
-    const err = e as { data?: { statusMessage?: string }; message?: string }
+    const err = e as { data?: { message?: string }; message?: string }
     toast.add({
       title: '下载失败',
-      description: err?.data?.statusMessage || err?.message || '未知错误',
+      description: err?.data?.message || err?.message || '未知错误',
       color: 'error',
     })
   }
@@ -667,10 +667,10 @@ async function openDeleteConfirm() {
     deleteSummary.value = { total: res.total, success: 0, failed: 0 }
     deletePhase.value = 'confirm'
   } catch (e: unknown) {
-    const err = e as { data?: { statusMessage?: string }; message?: string }
+    const err = e as { data?: { message?: string }; message?: string }
     toast.add({
       title: '统计失败',
-      description: err?.data?.statusMessage || err?.message || '未知错误',
+      description: err?.data?.message || err?.message || '未知错误',
       color: 'error',
     })
     deleteModalOpen.value = false
@@ -728,10 +728,10 @@ async function onConfirmDelete() {
     tab.selectedPrefixes = new Set()
     loadObjects(tab)
   } catch (e: unknown) {
-    const err = e as { data?: { statusMessage?: string }; message?: string }
+    const err = e as { data?: { message?: string }; message?: string }
     toast.add({
       title: '删除失败',
-      description: err?.data?.statusMessage || err?.message || '未知错误',
+      description: err?.data?.message || err?.message || '未知错误',
       color: 'error',
     })
     deletePhase.value = 'confirm'

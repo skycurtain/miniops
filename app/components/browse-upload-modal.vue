@@ -167,7 +167,7 @@ function uploadSingleFile(item: UploadItem): Promise<void> {
         let msg = `HTTP ${xhr.status}`
         try {
           const err = JSON.parse(xhr.responseText)
-          msg = err.statusMessage || err.message || msg
+          msg = err.message || msg
         } catch {
           // 非 JSON 错误响应
         }

@@ -9,12 +9,12 @@ export default defineEventHandler(async (event) => {
   if (!res.success) {
     throw createError({
       statusCode: 400,
-      statusMessage: res.issues[0]?.message || '请求参数校验失败',
+      message: res.issues[0]?.message || '请求参数校验失败',
     })
   }
   const group = await updateGroup(id, res.output)
   if (!group) {
-    throw createError({ statusCode: 404, statusMessage: '分组不存在' })
+    throw createError({ statusCode: 404, message: '分组不存在' })
   }
   return group
 })

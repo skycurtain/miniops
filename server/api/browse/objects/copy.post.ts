@@ -34,10 +34,10 @@ export default defineEventHandler(async (event) => {
   }>(event)
 
   if (!body?.sourceInstanceId || !body?.targetInstanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少源/目标实例 ID' })
+    throw createError({ statusCode: 400, message: '缺少源/目标实例 ID' })
   }
   if (!body?.sourceBucket || !body?.targetBucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少源/目标 bucket' })
+    throw createError({ statusCode: 400, message: '缺少源/目标 bucket' })
   }
 
   const allGroups = await getGroups()
@@ -52,10 +52,10 @@ export default defineEventHandler(async (event) => {
   const sourceInstance = findInstance(body.sourceInstanceId)
   const targetInstance = findInstance(body.targetInstanceId)
   if (!sourceInstance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到源实例' })
+    throw createError({ statusCode: 404, message: '未找到源实例' })
   }
   if (!targetInstance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到目标实例' })
+    throw createError({ statusCode: 404, message: '未找到目标实例' })
   }
 
   const sse = createSSEStream(event)

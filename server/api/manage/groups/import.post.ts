@@ -8,7 +8,7 @@ export default defineEventHandler(async (event) => {
   if (!res.success) {
     throw createError({
       statusCode: 400,
-      statusMessage: res.issues[0]?.message || '导入数据格式错误',
+      message: res.issues[0]?.message || '导入数据格式错误',
     })
   }
   return await importGroups(res.output)

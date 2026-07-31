@@ -340,10 +340,10 @@ async function onImportFile(event: Event) {
     await refresh()
   }
   catch (e: unknown) {
-    const err = e as { statusMessage?: string, message?: string }
+    const err = e as { message?: string }
     toast.add({
       title: '导入失败',
-      description: err.statusMessage || err.message || '文件格式错误',
+      description: err.message || '文件格式错误',
       color: 'error',
     })
   }

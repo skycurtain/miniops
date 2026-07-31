@@ -24,13 +24,13 @@ export default defineEventHandler(async (event) => {
   const file = form.get('file')
 
   if (!instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
   if (!bucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 bucket' })
+    throw createError({ statusCode: 400, message: '缺少 bucket' })
   }
   if (!file || !(file instanceof File)) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 file' })
+    throw createError({ statusCode: 400, message: '缺少 file' })
   }
 
   // 从 store 查出实例
@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   // 构造 objectKey：prefix + 相对路径（文件夹上传时保留目录结构）

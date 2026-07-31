@@ -18,10 +18,10 @@ export default defineEventHandler(async (event) => {
   }>(event)
 
   if (!body?.instanceId) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 instanceId' })
+    throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
   if (!body?.bucket) {
-    throw createError({ statusCode: 400, statusMessage: '缺少 bucket' })
+    throw createError({ statusCode: 400, message: '缺少 bucket' })
   }
 
   // 从 store 查出实例
@@ -32,7 +32,7 @@ export default defineEventHandler(async (event) => {
     if (instance) break
   }
   if (!instance) {
-    throw createError({ statusCode: 404, statusMessage: '未找到指定实例' })
+    throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
   // 清洗 prefix，防路径遍历；非空时补回尾部斜杠（S3 虚拟文件夹模式要求）
@@ -42,7 +42,7 @@ export default defineEventHandler(async (event) => {
   const result = await listObjects(instance, body.bucket, prefix, '/', body.continuationToken)
 
   if (result.error) {
-    throw createError({ statusCode: 502, statusMessage: result.error })
+    throw createError({ statusCode: 502, message: result.error })
   }
   return result
 })

@@ -821,11 +821,22 @@ function onCopyMoveComplete() {
     </template>
 
     <template #body>
+      <!-- 页头行（跨全宽） -->
+      <div class="flex shrink-0 items-center justify-between gap-4">
+        <div class="flex flex-col gap-1">
+          <h1 class="text-highlighted text-2xl font-bold">
+            实例访问
+          </h1>
+          <p class="text-muted">
+            浏览和管理 MinIO 实例中的对象
+          </p>
+        </div>
+      </div>
+
       <div class="flex h-full min-h-0 gap-3">
         <!-- 左侧栏：实例树 -->
         <div
-          class="border-default bg-default flex shrink-0 flex-col overflow-hidden rounded-lg border"
-          style="width: 260px"
+          class="border-default bg-default flex w-64 shrink-0 flex-col overflow-hidden rounded-lg border"
         >
           <div class="flex shrink-0 items-center px-3 py-2">
             <span class="text-highlighted text-sm font-semibold">实例树</span>

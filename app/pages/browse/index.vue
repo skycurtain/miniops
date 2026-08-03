@@ -27,6 +27,7 @@ const { data: groups } = await useFetch<InstanceGroup[]>('/api/manage/groups', {
 // ==================== 实例树 ====================
 interface InstanceTreeItem extends TreeItem {
   instanceId?: string
+  endpoint?: string
   children?: InstanceTreeItem[]
 }
 
@@ -41,6 +42,7 @@ const treeItems = computed<InstanceTreeItem[]>(() =>
         label: i.name,
         icon: 'i-lucide-server',
         instanceId: i.id,
+        endpoint: i.endpoint,
         onSelect: () => openInstance(i),
       })),
   })),
@@ -849,6 +851,15 @@ function onCopyMoveComplete() {
               color="primary"
               size="sm"
             >
+              <template #item-label="{ item }">
+                <span
+                  class="truncate text-sm font-medium"
+                  :class="(item as InstanceTreeItem).instanceId ? 'text-highlighted' : 'text-highlighted'"
+                  :title="(item as InstanceTreeItem).endpoint"
+                >
+                  {{ item.label }}
+                </span>
+              </template>
               <template #item-trailing="{ item }">
                 <span
                   v-if="

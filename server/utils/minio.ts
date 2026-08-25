@@ -403,8 +403,10 @@ export async function getObjectStream(
 /**
  * 流式上传对象（后端转发，不落盘）。
  *
- * SDK PutObjectCommand，Content-Type 显式指定，
- * 避免 SDK 追加 ;charset=utf-8 导致 MinIO 预览失败。
+ * SDK PutObjectCommand，Content-Type 显式指定。
+ * 注意：SDK 本身不会改写 Content-Type；历史上出现的 `;charset=utf-8`
+ * 是 Bun 运行时 formData() 解析 multipart 时附加的（见 dispatch/stage.post.ts），
+ * 所以上游传入的 contentType 必须是按扩展名推断出的纯净值。
  */
 export async function uploadObjectStream(
   instance: MinioInstance,

@@ -1,5 +1,5 @@
 import { stageFile } from '#server/utils/staging'
-import { sanitizeObjectKey } from '#server/utils/minio'
+import { sanitizeObjectKey, inferContentType } from '#server/utils/minio'
 
 /**
  * POST /api/dispatch/stage
@@ -25,7 +25,11 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '缺少 objectKey' })
   }
 
-  const contentType = file.type || 'application/octet-stream'
+  // Content-Type 按扩展名推断，不信任 file.type：
+  // Bun 运行时的 formData() 解析 multipart 时会给 Content-Type 追加 ;charset=utf-8
+  // （如 application/json -> application/json;charset=utf-8），Node/undici 则不会。
+  // 该值会原样写入 MinIO，带 charset 会导致 MinIO Console 无法预览。
+  const contentType = inferContentType(objectKey)
   const buffer = Buffer.from(await file.arrayBuffer())
 
   const staged = await stageFile(

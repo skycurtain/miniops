@@ -1,25 +1,17 @@
 import { getGroups } from '#server/utils/store'
-import {
-  copyObjectStream,
-  collectObjectsByPrefixes,
-  inferContentType,
-} from '#server/utils/minio'
-import { createSSEStream } from '#server/utils/sse'
+import { createTask } from '#server/utils/task-manager'
+import { createCopyExecutor } from '#server/utils/executors/copy'
 import type { MinioInstance } from '#shared/schemas/groups'
+import type { TaskDescription } from '#shared/schemas/task'
 
 /**
  * POST /api/browse/objects/copy
- * 复制对象到另一个实例/bucket（流式 GetObject -> PutObject，不落盘）。
+ * 复制对象到另一个实例/bucket（服务端复制或流式直传）。
  *
- * 请求体: CopyMoveRequest
- * 响应: SSE 流，推送扫描/传输/完成进度事件。
+ * 改造后：提交即返回 taskId，进度通过通用 SSE 端点订阅。
+ * 后端任务与连接解绑，支持后台运行和断线重连。
  *
- * 事件类型:
- *   - scan: { scanned: number }  扫描进度
- *   - total: { total: number }  扫描完成，总数
- *   - progress: { key, status, progress }  单文件进度
- *   - done: { success, failed }  完成
- *   - error: { message }  错误
+ * 响应: { taskId: string }
  */
 export default defineEventHandler(async (event) => {
   const body = await readBody<{
@@ -40,6 +32,7 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 400, message: '缺少源/目标 bucket' })
   }
 
+  // 查找源/目标实例
   const allGroups = await getGroups()
   const findInstance = (id: string): MinioInstance | undefined => {
     for (const g of allGroups) {
@@ -58,72 +51,28 @@ export default defineEventHandler(async (event) => {
     throw createError({ statusCode: 404, message: '未找到目标实例' })
   }
 
-  const sse = createSSEStream(event)
+  // 构造任务描述
+  const description: TaskDescription = {
+    type: 'copy',
+    label: `复制 ${body.keys.length} 个对象` +
+      (body.prefixes.length > 0 ? ` + ${body.prefixes.length} 个文件夹` : ''),
+    detail: `${sourceInstance.name}/${body.sourceBucket} -> ${targetInstance.name}/${body.targetBucket}`,
+  }
 
-  // 异步执行复制，不阻塞响应
-  ;(async () => {
-    try {
-      // 1. 收集所有要复制的对象 key
-      const allKeys = new Set<string>(body.keys)
-      for (const prefix of body.prefixes) {
-        const { keys, error } = await collectObjectsByPrefixes(sourceInstance, body.sourceBucket, [
-          prefix,
-        ])
-        if (error) {
-          await sse.send({ message: error }, 'error')
-          await sse.close()
-          return
-        }
-        for (const k of keys) allKeys.add(k)
-      }
+  // 创建执行器（工厂函数，闭包捕获参数）
+  const executor = createCopyExecutor({
+    sourceInstance,
+    sourceBucket: body.sourceBucket,
+    sourcePrefix: body.sourcePrefix,
+    keys: body.keys,
+    prefixes: body.prefixes,
+    targetInstance,
+    targetBucket: body.targetBucket,
+    targetPrefix: body.targetPrefix,
+  })
 
-      // 单独对象也要收集大小信息
-      const keyArray = Array.from(allKeys)
-      await sse.send({ total: keyArray.length }, 'total')
+  // 创建任务，返回 taskId
+  const taskId = createTask('copy', description, executor)
 
-      // 2. 逐个复制
-      let success = 0
-      let failed = 0
-      for (const key of keyArray) {
-        await sse.send({ key }, 'start')
-        try {
-          // 计算目标 key：源前缀剥离后拼接到目标前缀下
-          const relativeKey =
-            body.sourcePrefix && key.startsWith(body.sourcePrefix)
-              ? key.slice(body.sourcePrefix.length)
-              : key
-          const targetKey = body.targetPrefix
-            ? `${body.targetPrefix.replace(/\/$/, '')}/${relativeKey}`
-            : relativeKey
-
-          const contentType = inferContentType(key)
-          await copyObjectStream(
-            sourceInstance,
-            body.sourceBucket,
-            key,
-            targetInstance,
-            body.targetBucket,
-            targetKey,
-            contentType,
-          )
-          success++
-          await sse.send({ key, status: 'success' }, 'progress')
-        } catch (e: unknown) {
-          const err = e as { message?: string }
-          failed++
-          await sse.send({ key, status: 'failed', error: err?.message || '复制失败' }, 'progress')
-        }
-      }
-
-      // 3. 完成
-      await sse.send({ success, failed }, 'done')
-    } catch (e: unknown) {
-      const err = e as { message?: string }
-      await sse.send({ message: err?.message || '复制过程中出错' }, 'error')
-    } finally {
-      await sse.close()
-    }
-  })()
-
-  return sse.response
+  return { taskId }
 })

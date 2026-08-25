@@ -496,7 +496,9 @@ export async function copyObjectStream(
       new CopyObjectCommand({
         Bucket: targetBucket,
         Key: targetKey,
-        CopySource: `${sourceBucket}/${sourceKey}`,
+        // CopySource 需 URL 编码：key 含中文/特殊字符时直接放入 HTTP header 会报
+        // "Invalid character in header content ["x-amz-copy-source"]"
+        CopySource: `${sourceBucket}/${encodeURIComponent(sourceKey)}`,
         ContentType: contentType,
         MetadataDirective: contentType ? 'REPLACE' : 'COPY',
       }),

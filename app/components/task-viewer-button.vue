@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import type { TaskState, TaskType, InstanceProgress, FileResult } from '#shared/schemas/task'
 
-const { activeTask, queueTasks, completedTasks, cancelTask, fetchCompleted, markViewed } = useTaskManager()
-
 // ==================== 类型映射 ====================
 const typeIconMap: Record<TaskType, string> = {
   dispatch: 'i-lucide-send',
@@ -20,9 +18,24 @@ const typeLabelMap: Record<TaskType, string> = {
 // ==================== 弹窗开关 ====================
 const open = ref(false)
 
-// 组件挂载时预加载已完成任务（仅一次，后续靠 SSE 实时更新）
-onMounted(() => {
+// 组件挂载时恢复任务状态（仅一次，后续靠 SSE 实时更新）：
+// 1. 最近完成任务（“最近完成”区域）
+// 2. 活跃任务（执行中 + 排队中）--刷新/重开页面后恢复显示，并重建 SSE 订阅
+const { activeTasks, queueTasks, completedTasks, cancelTask, fetchCompleted, fetchActive, subscribeTask, markViewed } = useTaskManager()
+
+onMounted(async () => {
   fetchCompleted().catch(() => {})
+  try {
+    const tasks = await fetchActive()
+    // 对服务端仍在执行/排队的任务重建 SSE 订阅（进度实时更新）
+    for (const task of tasks) {
+      if (task.status === 'running' || task.status === 'queued') {
+        void subscribeTask(task.taskId)
+      }
+    }
+  } catch {
+    // 拉取失败不阻塞挂载，静默
+  }
 })
 
 watch(open, async (val) => {
@@ -32,16 +45,22 @@ watch(open, async (val) => {
   if (ids.length) {
     try {
       await markViewed(ids)
-    } catch {}
+    } catch {
+      // 标记已查看失败不阻塞交互，静默
+    }
   }
 })
 
 // ==================== 角标状态 ====================
-const hasActive = computed(() => !!activeTask.value || queueTasks.value.length > 0)
-const activeCount = computed(() => (activeTask.value ? 1 : 0) + queueTasks.value.length)
+const hasActive = computed(() => activeTasks.value.length > 0 || queueTasks.value.length > 0)
+const activeCount = computed(() => activeTasks.value.length + queueTasks.value.length)
 
-const unviewedFailedOrCancelled = computed(() =>
-  completedTasks.value.filter(t => !t.viewed && (t.status === 'failed' || t.status === 'cancelled')),
+const unviewedFailed = computed(() =>
+  completedTasks.value.filter(t => !t.viewed && t.status === 'failed'),
+)
+
+const unviewedCancelled = computed(() =>
+  completedTasks.value.filter(t => !t.viewed && t.status === 'cancelled'),
 )
 
 const unviewedSuccess = computed(() =>
@@ -51,7 +70,8 @@ const unviewedSuccess = computed(() =>
 // 是否处于"全部成功且未查看"状态
 const inAllSuccessState = computed(() =>
   !hasActive.value
-  && unviewedFailedOrCancelled.value.length === 0
+  && unviewedFailed.value.length === 0
+  && unviewedCancelled.value.length === 0
   && unviewedSuccess.value.length > 0,
 )
 
@@ -81,14 +101,16 @@ onUnmounted(() => {
 
 const buttonIcon = computed(() => {
   if (hasActive.value) return 'i-lucide-loader-circle'
-  if (unviewedFailedOrCancelled.value.length > 0) return 'i-lucide-triangle-alert'
+  if (unviewedFailed.value.length > 0) return 'i-lucide-triangle-alert'
+  if (unviewedCancelled.value.length > 0) return 'i-lucide-circle-slash'
   if (inAllSuccessState.value) return 'i-lucide-check-circle'
   return 'i-lucide-list-checks'
 })
 
 const buttonIconClass = computed(() => {
   if (hasActive.value) return 'text-primary animate-spin'
-  if (unviewedFailedOrCancelled.value.length > 0) return 'text-warning'
+  if (unviewedFailed.value.length > 0) return 'text-error'
+  if (unviewedCancelled.value.length > 0) return 'text-warning'
   if (inAllSuccessState.value) return 'text-success'
   return 'text-muted'
 })
@@ -97,8 +119,11 @@ const badge = computed(() => {
   if (hasActive.value) {
     return { show: true, content: String(activeCount.value), color: 'info' as const }
   }
-  if (unviewedFailedOrCancelled.value.length > 0) {
+  if (unviewedFailed.value.length > 0) {
     return { show: true, content: '!', color: 'error' as const }
+  }
+  if (unviewedCancelled.value.length > 0) {
+    return { show: true, content: '!', color: 'warning' as const }
   }
   if (successBadgeVisible.value) {
     return { show: true, content: '✓', color: 'success' as const }
@@ -108,6 +133,12 @@ const badge = computed(() => {
 
 // ==================== 详情展开（手风琴） ====================
 const expandedTaskId = ref<string | null>(null)
+
+/** 任务是否有可展开的文件详情 */
+function hasFileDetails(task: TaskState): boolean {
+  return !!task.fileProgress && Object.keys(task.fileProgress.results).length > 0
+    || !!task.instanceProgress && task.instanceProgress.length > 0
+}
 
 function toggleExpand(taskId: string) {
   expandedTaskId.value = expandedTaskId.value === taskId ? null : taskId
@@ -199,49 +230,49 @@ async function onCancel(taskId: string) {
     <template #content>
       <div class="flex flex-col gap-3 p-3">
         <!-- ═══ 执行中 ═══ -->
-        <div v-if="activeTask" class="flex flex-col gap-1.5">
+        <div v-if="activeTasks.length" class="flex flex-col gap-1.5">
           <span class="text-muted text-xs font-semibold uppercase">执行中</span>
-          <div class="border-default rounded-md border">
+          <div v-for="task in activeTasks" :key="task.taskId" class="border-default rounded-md border">
             <!-- 概要行（可点击展开详情，手风琴模式） -->
             <div
               class="flex cursor-pointer items-center gap-2 px-3 py-2 hover:bg-elevated/50"
-              @click="toggleExpand(activeTask.taskId)"
+              @click="toggleExpand(task.taskId)"
             >
               <NuxtIcon
-                :name="expandedTaskId === activeTask.taskId ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
+                :name="expandedTaskId === task.taskId ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
                 class="text-muted size-4 shrink-0"
               />
-              <NuxtIcon :name="typeIconMap[activeTask.type]" class="text-primary size-4 shrink-0" />
+              <NuxtIcon :name="typeIconMap[task.type]" class="text-primary size-4 shrink-0" />
               <span class="text-sm font-medium truncate flex-1">
-                {{ activeTask.description.label || typeLabelMap[activeTask.type] }}
+                {{ task.description.label || typeLabelMap[task.type] }}
               </span>
               <NuxtBadge
-                v-if="phaseLabel(activeTask.currentPhase)"
+                v-if="phaseLabel(task.currentPhase)"
                 color="neutral"
                 variant="subtle"
                 size="sm"
                 class="shrink-0"
               >
-                {{ phaseLabel(activeTask.currentPhase) }}
+                {{ phaseLabel(task.currentPhase) }}
               </NuxtBadge>
-              <span class="text-muted shrink-0 text-xs">{{ getTaskProgress(activeTask).percent }}%</span>
+              <span class="text-muted shrink-0 text-xs">{{ getTaskProgress(task).percent }}%</span>
             </div>
             <!-- 进度条 -->
             <div class="px-3 pb-2">
-              <NuxtProgress :model-value="getTaskProgress(activeTask).percent" size="xs" />
-              <div v-if="activeTask.summary" class="text-muted mt-1 text-xs">
-                成功 {{ activeTask.summary.success }} · 失败 {{ activeTask.summary.failed }} · 跳过 {{ activeTask.summary.skipped }}
+              <NuxtProgress :model-value="getTaskProgress(task).percent" size="xs" />
+              <div v-if="task.summary" class="text-muted mt-1 text-xs">
+                成功 {{ task.summary.success }} · 失败 {{ task.summary.failed }} · 跳过 {{ task.summary.skipped }}
               </div>
             </div>
             <!-- 详情区（手风琴展开，max-h-60 overflow-y-auto） -->
             <div
-              v-if="expandedTaskId === activeTask.taskId"
+              v-if="expandedTaskId === task.taskId"
               class="border-default max-h-60 overflow-y-auto border-t px-3 py-2"
             >
               <!-- dispatch: 实例维度 -->
-              <template v-if="activeTask.type === 'dispatch' && activeTask.instanceProgress">
+              <template v-if="task.type === 'dispatch' && task.instanceProgress">
                 <div
-                  v-for="inst in activeTask.instanceProgress"
+                  v-for="inst in task.instanceProgress"
                   :key="inst.instanceId"
                   class="flex flex-col gap-1 pb-2 last:pb-0"
                 >
@@ -285,9 +316,9 @@ async function onCancel(taskId: string) {
                 </div>
               </template>
               <!-- 其他类型: 扁平文件维度 -->
-              <template v-else-if="activeTask.fileProgress">
+              <template v-else-if="task.fileProgress">
                 <div
-                  v-for="(result, key) in activeTask.fileProgress.results"
+                  v-for="(result, key) in task.fileProgress.results"
                   :key="key"
                   class="flex items-center gap-2 py-0.5"
                 >
@@ -340,15 +371,18 @@ async function onCancel(taskId: string) {
             :key="task.taskId"
             class="flex flex-col"
           >
-            <!-- 概要行（可点击展开） -->
+            <!-- 概要行（有详情时可点击展开） -->
             <div
-              class="flex cursor-pointer items-center gap-2 px-1 py-1 hover:bg-elevated/50"
-              @click="toggleExpand(task.taskId)"
+              class="flex items-center gap-2 px-1 py-1"
+              :class="hasFileDetails(task) ? 'cursor-pointer hover:bg-elevated/50' : ''"
+              @click="hasFileDetails(task) && toggleExpand(task.taskId)"
             >
               <NuxtIcon
+                v-if="hasFileDetails(task)"
                 :name="expandedTaskId === task.taskId ? 'i-lucide-chevron-down' : 'i-lucide-chevron-right'"
                 class="text-muted size-3.5 shrink-0"
               />
+              <div v-else class="size-3.5 shrink-0" />
               <NuxtIcon
                 :name="completedResultIcon(task).name"
                 :class="completedResultIcon(task).class"
@@ -448,7 +482,7 @@ async function onCancel(taskId: string) {
 
         <!-- ═══ 空状态 ═══ -->
         <div
-          v-if="!activeTask && !queueTasks.length && !completedTasks.length"
+          v-if="!activeTasks.length && !queueTasks.length && !completedTasks.length"
           class="text-muted text-center py-6 text-sm"
         >
           暂无任务

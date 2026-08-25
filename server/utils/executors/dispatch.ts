@@ -10,7 +10,7 @@ import type { InstanceProgress, FileResult, TaskSummary } from '#shared/schemas/
 import type { MinioInstance } from '#shared/schemas/groups'
 
 const DISPATCH_CONCURRENCY = Number(process.env.DISPATCH_CONCURRENCY) || 5
-const DISPATCH_DELAY_MS = Number(process.env.DISPATCH_DELAY_MS) || 0
+const TASK_DELAY_MS = Number(process.env.TASK_DELAY_MS) || 0
 
 /** 查找实例配置 */
 async function findInstance(instanceId: string): Promise<MinioInstance | undefined> {
@@ -112,8 +112,8 @@ export function createDispatchExecutor(
               ? `${sanitizeObjectKey(prefix)}/${file.objectKey}`
               : file.objectKey
             // 测试延时（模拟慢速分发）
-            if (DISPATCH_DELAY_MS > 0) {
-              await new Promise(resolve => setTimeout(resolve, DISPATCH_DELAY_MS))
+            if (TASK_DELAY_MS > 0) {
+              await new Promise(resolve => setTimeout(resolve, TASK_DELAY_MS))
             }
             const body = await readFile(file.diskPath)
             await uploadObjectStream(inst, target.bucket, fullKey, body, file.contentType, file.size)

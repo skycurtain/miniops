@@ -808,10 +808,15 @@ function openSinglePrefixDelete(prefix: string) {
   openDeleteConfirm()
 }
 
-function onCopyMoveComplete() {
+function onCopyMoveComplete(sourceInstanceId: string, targetInstanceId: string) {
   singleTarget.value = null
-  if (activeTab.value && activeTab.value.selectedBucket) {
-    loadObjects(activeTab.value)
+  // 刷新源/目标实例的 tab（复制/移动会同时改变两侧数据）
+  // 去重：同实例只刷一次；非激活 tab 静默刷新，切回即见新数据
+  for (const instanceId of new Set([sourceInstanceId, targetInstanceId])) {
+    const tab = tabs.value.find(t => t.instanceId === instanceId)
+    if (tab && tab.selectedBucket) {
+      loadObjects(tab)
+    }
   }
 }
 </script>

@@ -127,14 +127,14 @@ export interface DispatchComposable {
  *   确保状态只初始化一次且子组件共享同一份引用。
  *
  * phase 切换修复：
- * - useTaskManager.finalize() 会先把 activeTask 设为带终态的对象，再在 nextTick 清空。
- * - watch(activeTask, deep) 能在终态对象被设置时捕获到 status 变化并更新 phase。
- * - watch(completedTasks, deep) 作为兜底：当 activeTask 被清空后，completedTasks 中
+ * - useTaskManager.finalize() 会先把 activeTasks 中对应任务设为带终态的对象，再在 nextTick 移除。
+ * - watch(activeTasks, deep) 能在终态对象被设置时捕获到 status 变化并更新 phase。
+ * - watch(completedTasks, deep) 作为兜底：当任务从 activeTasks 移除后，completedTasks 中
  *   已包含终态任务，确保 phase 一定能切换。
  */
 export function useDispatch(): DispatchComposable {
   const toast = useToast()
-  const { subscribeTask, cancelTask, activeTask, completedTasks } = useTaskManager()
+  const { subscribeTask, cancelTask, activeTasks, completedTasks } = useTaskManager()
 
   // ==================== 实例分组数据 ====================
   const { data: groupsData, pending: groupsPending, error: groupsError, refresh } = useFetch<InstanceGroup[]>(
@@ -639,18 +639,19 @@ export function useDispatch(): DispatchComposable {
     }
   }
 
-  // ==================== 监听 activeTask 更新进度矩阵 ====================
+  // ==================== 监听 activeTasks 更新进度矩阵 ====================
 
   /**
-   * watch activeTask（deep）处理进度更新 + 终态 phase 切换。
+   * watch activeTasks（deep）处理进度更新 + 终态 phase 切换。
    *
-   * finalize() 流程：先 activeTask.value = { ...终态 }（触发 watch），再 nextTick 清空。
+   * finalize() 流程：先在 activeTasks 中更新为带终态的 task，再 nextTick 移除。
    * 所以 watch 会先收到带 status=done/cancelled 的 task，此时更新 phase；
-   * 随后收到 null，此时直接 return。
+   * 随后收到数组中该任务被移除，此时直接 return。
    */
-  watch(activeTask, (task) => {
+  watch(activeTasks, (tasks) => {
+    if (!currentTaskId.value) return
+    const task = tasks.find(t => t.taskId === currentTaskId.value)
     if (!task) return
-    if (!currentTaskId.value || task.taskId !== currentTaskId.value) return
 
     // 合并 instanceProgress 到进度矩阵（重新赋值以触发响应式）
     if (task.instanceProgress) {
@@ -677,7 +678,7 @@ export function useDispatch(): DispatchComposable {
       instanceMeta.value = nextMeta
     }
 
-    // 更新 phase（终态归档时 activeTask 先被设为带终态的对象）
+    // 更新 phase（终态归档时 activeTasks 中先被设为带终态的对象）
     if (task.status === 'done') {
       phase.value = 'done'
     } else if (task.status === 'cancelled') {

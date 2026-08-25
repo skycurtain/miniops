@@ -4,17 +4,18 @@ import type { TaskState, TaskStatus, TaskSummary, FileResult } from '#shared/sch
  * 任务管理 composable（跨组件单例）。
  *
  * 与 use-connectivity 的组件级模式不同：这里用 `useState` 把任务状态挂到
- * Nuxt 的全局单例上，多个组件共享同一份 activeTask / queueTasks / completedTasks。
+ * Nuxt 的全局单例上，多个组件共享同一份 activeTasks / queueTasks / completedTasks。
  *
  * 必须在 setup 顶层调用（内部使用了 useState / useToast）。
  *
  * SSE 连接（EventSource）与任务执行解绑：断线不中断任务，重连可恢复进度。
+ * 支持多任务并行订阅（每个任务一个 EventSource）。
  */
 
 // ===== 客户端连接实例（模块级单例，仅客户端使用）=====
-// EventSource 不可序列化，不放进 useState；放在模块级变量，客户端单例共享。
-let activeEventSource: EventSource | null = null
-let reconnectTimer: ReturnType<typeof setTimeout> | null = null
+// EventSource 不可序列化，不放进 useState；放在模块级 Map，客户端单例共享。
+const eventSources = new Map<string, { es: EventSource, disposed: boolean }>()
+const reconnectTimers = new Map<string, ReturnType<typeof setTimeout>>()
 
 /** progress 事件载荷 */
 interface ProgressData {
@@ -25,31 +26,57 @@ interface ProgressData {
 }
 
 export function useTaskManager() {
-  const activeTask = useState<TaskState | null>('task-active', () => null)
+  const activeTasks = useState<TaskState[]>('task-active', () => [])
   const queueTasks = useState<TaskState[]>('task-queue', () => [])
   const completedTasks = useState<TaskState[]>('task-completed', () => [])
 
   const toast = useToast()
 
-  // ===== 内部：连接清理 =====
+  // ===== 内部：连接管理（按 taskId） =====
 
-  function clearReconnect() {
-    if (reconnectTimer) {
-      clearTimeout(reconnectTimer)
-      reconnectTimer = null
+  function clearReconnect(taskId: string) {
+    const timer = reconnectTimers.get(taskId)
+    if (timer) {
+      clearTimeout(timer)
+      reconnectTimers.delete(taskId)
     }
   }
 
-  function closeEventSource() {
-    if (activeEventSource) {
-      activeEventSource.close()
-      activeEventSource = null
+  function closeEventSource(taskId: string) {
+    const entry = eventSources.get(taskId)
+    if (entry) {
+      entry.es.close()
+      eventSources.delete(taskId)
     }
   }
 
-  function cleanupConnection() {
-    clearReconnect()
-    closeEventSource()
+  function cleanupConnection(taskId: string) {
+    clearReconnect(taskId)
+    closeEventSource(taskId)
+  }
+
+  // ===== 内部：activeTasks 数组操作 =====
+
+  function upsertActiveTask(state: TaskState) {
+    const idx = activeTasks.value.findIndex(t => t.taskId === state.taskId)
+    if (idx >= 0) {
+      activeTasks.value[idx] = state
+    } else {
+      activeTasks.value = [...activeTasks.value, state]
+    }
+  }
+
+  function updateActiveTask(taskId: string, updater: (t: TaskState) => TaskState) {
+    const idx = activeTasks.value.findIndex(t => t.taskId === taskId)
+    if (idx >= 0) {
+      const next = activeTasks.value.slice()
+      next[idx] = updater(next[idx]!)
+      activeTasks.value = next
+    }
+  }
+
+  function removeActiveTask(taskId: string) {
+    activeTasks.value = activeTasks.value.filter(t => t.taskId !== taskId)
   }
 
   // ===== 内部：进度合并 =====
@@ -97,7 +124,7 @@ export function useTaskManager() {
   // ===== 内部：终态归档 =====
 
   /**
-   * 把任务移入 completedTasks，并从 activeTask / queueTasks 清理。
+   * 把任务移入 completedTasks，并从 activeTasks / queueTasks 清理。
    * 幂等：若该任务已归档且不再持有 active，则跳过。
    */
   function finalize(
@@ -108,10 +135,9 @@ export function useTaskManager() {
   ) {
     const source: TaskState | null
       = base
-        ?? (activeTask.value?.taskId === taskId
-          ? activeTask.value
-          : queueTasks.value.find(t => t.taskId === taskId)
-            ?? null)
+        ?? activeTasks.value.find(t => t.taskId === taskId)
+        ?? queueTasks.value.find(t => t.taskId === taskId)
+        ?? null
 
     if (source) {
       const finalState: TaskState = {
@@ -127,58 +153,63 @@ export function useTaskManager() {
       ].slice(0, 20)
     }
 
-    if (activeTask.value?.taskId === taskId) {
-      // 先更新 status 让监听 activeTask 的组件能感知终态
-      activeTask.value = { ...activeTask.value, status, summary: summary ?? activeTask.value.summary, completedAt: source?.completedAt ?? Date.now() }
-      // nextTick 后清空，确保 watch 先处理终态再清空
-      nextTick(() => { activeTask.value = null })
-    }
+    // 先更新 status 让监听 activeTasks 的组件能感知终态，再移除
+    updateActiveTask(taskId, t => ({
+      ...t,
+      status,
+      summary: summary ?? t.summary ?? null,
+      completedAt: source?.completedAt ?? Date.now(),
+    }))
+    nextTick(() => removeActiveTask(taskId))
     queueTasks.value = queueTasks.value.filter(t => t.taskId !== taskId)
   }
 
   // ===== 内部：SSE 接线 =====
 
   function scheduleReconnect(taskId: string) {
-    clearReconnect()
-    reconnectTimer = setTimeout(() => {
-      reconnectTimer = null
+    clearReconnect(taskId)
+    reconnectTimers.set(taskId, setTimeout(() => {
+      reconnectTimers.delete(taskId)
       void subscribeTask(taskId)
-    }, 5000)
+    }, 5000))
   }
 
   function attachSse(taskId: string) {
-    cleanupConnection()
+    cleanupConnection(taskId)
 
     const es = new EventSource(`/api/tasks/${taskId}/events`)
-    activeEventSource = es
-    let disposed = false
+    eventSources.set(taskId, { es, disposed: false })
+    const entry = eventSources.get(taskId)!
 
     const dispose = () => {
-      if (disposed)
-        return
-      disposed = true
-      closeEventSource()
-      clearReconnect()
+      if (entry.disposed) return
+      entry.disposed = true
+      closeEventSource(taskId)
+      clearReconnect(taskId)
     }
 
     es.addEventListener('queued', (e: MessageEvent) => {
       const data = JSON.parse(e.data) as { taskId: string, queuePosition: number }
-      if (activeTask.value?.taskId === taskId) {
-        activeTask.value = {
-          ...activeTask.value,
-          status: 'queued',
-          queuePosition: data.queuePosition,
-        }
-      }
+      // queued 任务在 queueTasks 里更新
+      queueTasks.value = queueTasks.value.map(t =>
+        t.taskId === taskId
+          ? { ...t, status: 'queued' as const, queuePosition: data.queuePosition }
+          : t,
+      )
     })
 
     es.addEventListener('start', () => {
-      if (activeTask.value?.taskId === taskId) {
-        activeTask.value = {
-          ...activeTask.value,
+      // 从 queueTasks 移到 activeTasks
+      const queued = queueTasks.value.find(t => t.taskId === taskId)
+      if (queued) {
+        upsertActiveTask({ ...queued, status: 'running', queuePosition: undefined })
+      } else {
+        // 已在 activeTasks 里（重连场景）
+        updateActiveTask(taskId, t => ({
+          ...t,
           status: 'running',
           queuePosition: undefined,
-        }
+        }))
       }
       // 开始执行 -> 不再排队
       queueTasks.value = queueTasks.value.filter(t => t.taskId !== taskId)
@@ -186,16 +217,12 @@ export function useTaskManager() {
 
     es.addEventListener('progress', (e: MessageEvent) => {
       const data = JSON.parse(e.data) as ProgressData
-      if (activeTask.value?.taskId === taskId) {
-        activeTask.value = applyProgress(activeTask.value, data)
-      }
+      updateActiveTask(taskId, t => applyProgress(t, data))
     })
 
     es.addEventListener('phase', (e: MessageEvent) => {
       const data = JSON.parse(e.data) as { taskId: string, phase: string }
-      if (activeTask.value?.taskId === taskId) {
-        activeTask.value = { ...activeTask.value, currentPhase: data.phase }
-      }
+      updateActiveTask(taskId, t => ({ ...t, currentPhase: data.phase }))
     })
 
     es.addEventListener('complete', (e: MessageEvent) => {
@@ -221,15 +248,16 @@ export function useTaskManager() {
           const parsed = JSON.parse(me.data) as { taskId: string, message?: string }
           message = parsed.message || message
         }
-        catch {}
+        catch {
+          // JSON 解析失败用默认消息
+        }
         finalize(taskId, 'failed', null)
         toast.add({ title: '任务失败', description: message, color: 'error' })
         dispose()
       }
       else {
         // 网络断开 -> 5 秒后重连（先阻止 EventSource 默认自动重连）
-        if (disposed)
-          return
+        if (entry.disposed) return
         dispose()
         scheduleReconnect(taskId)
       }
@@ -241,12 +269,11 @@ export function useTaskManager() {
   /**
    * 订阅任务进度（SSE）。
    * 先拉状态快照恢复进度，再建立 EventSource。
+   * 不影响其他已有任务订阅。
    */
   async function subscribeTask(taskId: string) {
     if (import.meta.server)
       return
-
-    cleanupConnection()
 
     // 1. 拉取状态快照（重连恢复用）
     try {
@@ -258,14 +285,16 @@ export function useTaskManager() {
         return
       }
 
-      activeTask.value = state
       if (state.status === 'queued') {
+        // queued 任务只进队列列表，不进 activeTasks
         queueTasks.value = [
           ...queueTasks.value.filter(t => t.taskId !== taskId),
           state,
         ]
       }
       else if (state.status === 'running') {
+        // running 任务才进 activeTasks
+        upsertActiveTask(state)
         queueTasks.value = queueTasks.value.filter(t => t.taskId !== taskId)
       }
     }
@@ -273,7 +302,7 @@ export function useTaskManager() {
       // 快照拉取失败（可能已过期），仍尝试建立 SSE 由服务端兜底
     }
 
-    // 2. 建立 EventSource
+    // 2. 建立 EventSource（不影响其他任务的 SSE 连接）
     attachSse(taskId)
   }
 
@@ -284,8 +313,11 @@ export function useTaskManager() {
       // queued 取消：后端直接删除任务，乐观从队列移除
       queueTasks.value = queueTasks.value.filter(t => t.taskId !== taskId)
       // running 取消：等待 SSE cancelled 事件归档
+      // 清理 SSE 连接（queued 取消后不再需要）
+      cleanupConnection(taskId)
     }
-    catch {
+    catch (e) {
+      console.error('[cancelTask] 取消失败:', taskId, e)
       toast.add({ title: '取消任务失败', color: 'error' })
     }
   }
@@ -303,24 +335,25 @@ export function useTaskManager() {
     }
   }
 
-  /** 拉取活跃任务（执行中 + 排队中） */
-  async function fetchActive() {
+  /** 拉取活跃任务（执行中 + 排队中），返回任务列表供调用方重建订阅 */
+  async function fetchActive(): Promise<TaskState[]> {
     try {
       const tasks = await $fetch<TaskState[]>('/api/tasks', { query: { active: 1 } })
       queueTasks.value = tasks.filter(t => t.status === 'queued')
 
       const running = tasks.filter(t => t.status === 'running')
-      // 若当前没有正在订阅的运行中任务，则用服务端真相初始化 activeTask
-      const hasActiveRunning
-        = !!activeTask.value
-          && activeTask.value.status === 'running'
-          && tasks.some(t => t.taskId === activeTask.value!.taskId)
-      if (running.length && !hasActiveRunning) {
-        activeTask.value = running[0] ?? null
+      // 合并服务端的 running 任务到 activeTasks（不覆盖已有订阅的）
+      const existingIds = new Set(activeTasks.value.map(t => t.taskId))
+      for (const task of running) {
+        if (!existingIds.has(task.taskId)) {
+          upsertActiveTask(task)
+        }
       }
+      return tasks
     }
     catch {
       toast.add({ title: '加载活跃任务失败', color: 'error' })
+      return []
     }
   }
 
@@ -345,7 +378,7 @@ export function useTaskManager() {
   }
 
   return {
-    activeTask,
+    activeTasks,
     queueTasks,
     completedTasks,
     subscribeTask,

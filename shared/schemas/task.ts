@@ -9,6 +9,9 @@ export interface FileResult {
   status: 'success' | 'failed' | 'running' | 'pending' | 'skipped'
   duration?: number
   error?: string
+  // -- move 专属 --
+  sourceDeleteStatus?: 'deleted' | 'delete-failed' // 删除源结果（仅 move 的 deleting 阶段设置）
+  sourceDeleteError?: string // 删除源失败错误
 }
 
 /** 实例级进度（dispatch 专属） */

@@ -189,13 +189,10 @@ export function cancelTask(taskId: string): boolean {
 
   if (task.status === 'queued') {
     // 排队中取消：直接从 Map 移除（不进入"最近完成"），从队列移除
+    // 不 emit cancelled 事件：排队取消的任务不应出现在最近完成中
     const idx = queue.indexOf(task)
     if (idx >= 0) queue.splice(idx, 1)
     tasks.delete(taskId)
-    emitToSubscribers(task, {
-      event: 'cancelled',
-      data: { taskId, summary: task.summary || { total: 0, success: 0, failed: 0, skipped: 0 } },
-    })
     return true
   }
 

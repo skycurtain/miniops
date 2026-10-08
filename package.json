@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "build": "nuxt build",
-    "dev": "bunx --bun nuxt dev",
+    "dev": "bun x --bun nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
     "start": "bun run .output/server/index.mjs",

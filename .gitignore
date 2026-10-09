@@ -19,10 +19,11 @@ logs
 .idea
 
 # Runtime data
-server/data/groups.json
+server/data/
 
 # Editor / agent tooling
 .reasonix/
+.playwright-cli/
 
 # Local env files
 .env

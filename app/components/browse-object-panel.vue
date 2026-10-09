@@ -107,18 +107,22 @@ const browseColumns: TableColumn<BrowseTableRow>[] = [
   {
     id: 'name',
     header: '名称',
+    meta: { class: { th: 'w-80', td: 'w-80' } },
   },
   {
     id: 'size',
     header: '大小',
+    meta: { class: { th: 'w-24', td: 'w-24' } },
   },
   {
     id: 'lastModified',
     header: '修改时间',
+    meta: { class: { th: 'w-40', td: 'w-40' } },
   },
   {
     id: 'actions',
     header: '',
+    meta: { class: { th: 'w-40', td: 'w-40' } },
   },
 ]
 
@@ -282,7 +286,9 @@ function onTableScroll(e: Event) {
               @click="emit('navigate', row.original.key)"
             >
               <NuxtIcon name="i-lucide-folder" class="text-primary size-4 shrink-0" />
-              <span class="truncate font-mono">{{ row.original.name }}</span>
+              <NuxtTooltip :text="row.original.key">
+                <span class="truncate font-mono">{{ row.original.name }}</span>
+              </NuxtTooltip>
             </div>
             <div v-else class="flex min-w-0 flex-1 items-center gap-2">
               <NuxtIcon :name="fileIcon(row.original.key)" class="text-muted size-4 shrink-0" />

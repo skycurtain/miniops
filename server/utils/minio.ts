@@ -102,11 +102,35 @@ function formatS3Error(e: unknown): string {
     name?: string
     $metadata?: { httpStatusCode?: number }
     message?: string
+    errors?: unknown[]
+    cause?: unknown
+  }
+  // AggregateError（连接被拒等）：message 常为空，从 errors[] 取有效信息
+  if (err.errors?.length) {
+    const parts = err.errors.map((x) => (x instanceof Error ? x.message : String(x)))
+    const joined = parts.filter(Boolean).join('; ')
+    if (joined) return joined
   }
   const statusCode = err.$metadata?.httpStatusCode
   if (statusCode === 403 || err.name === 'AccessDenied') return '403 Access Denied'
   if (statusCode === 404) return '404 Not Found'
-  return err.name || err.message || 'S3 错误'
+  return err.message || err.name || 'S3 错误'
+}
+
+/** 执行器统一错误文案（覆盖 AggregateError / 空 message） */
+export function formatExecError(err: unknown): string {
+  if (err instanceof Error) {
+    const agg = err as Error & { errors?: unknown[] }
+    if (agg.errors?.length) {
+      const joined = agg.errors
+        .map((x) => (x instanceof Error ? x.message : String(x)))
+        .filter(Boolean)
+        .join('; ')
+      if (joined) return joined
+    }
+    return err.message || err.name || String(err)
+  }
+  return String(err)
 }
 
 /**

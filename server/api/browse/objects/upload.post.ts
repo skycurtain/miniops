@@ -1,63 +1,80 @@
 import { getGroups } from '#server/utils/store'
-import { uploadObjectStream, sanitizeObjectKey, inferContentType } from '#server/utils/minio'
+import { createTask } from '#server/utils/task-manager'
+import { createUploadExecutor } from '#server/utils/executors/upload'
+import { getStagedFiles } from '#server/utils/staging'
+import { sanitizeObjectKey } from '#server/utils/minio'
 import type { MinioInstance } from '#shared/schemas/groups'
+import type { TaskDescription } from '#shared/schemas/task'
 
 /**
  * POST /api/browse/objects/upload
- * 流式上传对象（后端转发，不落盘）。
+ * 提交上传任务（文件已在暂存阶段落盘，见 stage.post.ts）。
  *
- * 请求体: multipart/form-data
+ * 请求体（JSON）:
+ *   - files: { fileId: string; objectKey: string }[]  // 暂存 fileId + 相对路径
  *   - instanceId: string
  *   - bucket: string
  *   - prefix: string（目标前缀，留空=根）
- *   - file: File
  *
- * 响应: 201 { key, size }
+ * 响应: { taskId: string }
+ *
+ * 任务由 TaskManager 异步执行，与 SSE 连接解绑，
+ * 支持后台运行和断线重连（通用任务架构）。
  */
 export default defineEventHandler(async (event) => {
-  const form = await readFormData(event)
+  const body = await readBody<{
+    files?: { fileId: string; objectKey: string }[]
+    instanceId?: string
+    bucket?: string
+    prefix?: string
+  }>(event)
 
-  const instanceId = form.get('instanceId') as string | null
-  const bucket = form.get('bucket') as string | null
-  const prefix = (form.get('prefix') as string | null) ?? ''
-  const relativePath = (form.get('relativePath') as string | null) ?? ''
-  const file = form.get('file')
-
-  if (!instanceId) {
+  if (!body?.files?.length) {
+    throw createError({ statusCode: 400, message: '缺少文件列表' })
+  }
+  if (!body.instanceId) {
     throw createError({ statusCode: 400, message: '缺少 instanceId' })
   }
-  if (!bucket) {
+  if (!body.bucket) {
     throw createError({ statusCode: 400, message: '缺少 bucket' })
-  }
-  if (!file || !(file instanceof File)) {
-    throw createError({ statusCode: 400, message: '缺少 file' })
   }
 
   // 从 store 查出实例
   const allGroups = await getGroups()
   let instance: MinioInstance | undefined
   for (const g of allGroups) {
-    instance = g.instances.find((i) => i.id === instanceId)
+    instance = g.instances.find((i) => i.id === body.instanceId)
     if (instance) break
   }
   if (!instance) {
     throw createError({ statusCode: 404, message: '未找到指定实例' })
   }
 
-  // 构造 objectKey：prefix + 相对路径（文件夹上传时保留目录结构）
-  // relativePath 可能是 "myfolder/sub/file.txt"（文件夹上传）或 "file.txt"（单文件）
-  const pathPart = relativePath || file.name
-  const rawKey = prefix ? `${prefix}/${pathPart}` : pathPart
-  const objectKey = sanitizeObjectKey(rawKey)
+  // 校验所有 fileId 均已暂存
+  const stagedFiles = getStagedFiles(body.files.map(f => f.fileId))
+  if (stagedFiles.length !== body.files.length) {
+    throw createError({ statusCode: 400, message: '部分文件未暂存或已过期，请重新上传' })
+  }
 
-  // 推断 Content-Type
-  const contentType = inferContentType(file.name)
+  const prefix = body.prefix ? sanitizeObjectKey(body.prefix) : ''
 
-  // 读取文件内容为 Uint8Array（SDK 无法对 Web ReadableStream 计算 checksum）
-  const body = new Uint8Array(await file.arrayBuffer())
+  // 构造任务描述
+  const description: TaskDescription = {
+    type: 'upload',
+    label: `上传 ${body.files.length} 个文件`,
+    detail: `${instance.name}/${body.bucket}${prefix ? `/${prefix}` : ''}`,
+  }
 
-  await uploadObjectStream(instance, bucket, objectKey, body, contentType, file.size)
+  // 创建执行器（工厂函数，闭包捕获参数）
+  const executor = createUploadExecutor({
+    files: body.files,
+    instance,
+    bucket: body.bucket,
+    prefix,
+  })
 
-  setResponseStatus(event, 201)
-  return { key: objectKey, size: file.size }
+  // 创建任务，返回 taskId
+  const taskId = createTask('upload', description, executor)
+
+  return { taskId }
 })

@@ -310,11 +310,15 @@ export function useTaskManager() {
   async function cancelTask(taskId: string) {
     try {
       await $fetch(`/api/tasks/${taskId}/cancel`, { method: 'POST' })
+      const wasQueued = queueTasks.value.some(t => t.taskId === taskId)
       // queued 取消：后端直接删除任务，乐观从队列移除
       queueTasks.value = queueTasks.value.filter(t => t.taskId !== taskId)
-      // running 取消：等待 SSE cancelled 事件归档
-      // 清理 SSE 连接（queued 取消后不再需要）
-      cleanupConnection(taskId)
+      if (wasQueued) {
+        // 排队取消后端不 emit cancelled，本地归档并关掉 SSE
+        finalize(taskId, 'cancelled', null)
+        cleanupConnection(taskId)
+      }
+      // running 取消：保留 SSE，等 cancelled 事件（含 summary/终态 fileProgress）再归档
     }
     catch (e) {
       console.error('[cancelTask] 取消失败:', taskId, e)

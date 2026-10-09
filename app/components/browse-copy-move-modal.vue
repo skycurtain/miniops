@@ -374,14 +374,18 @@ function onClose() {
 /** 从弹窗取消任务（排队中取消不会触发 SSE 事件，需手动处理弹窗状态） */
 async function cancelFromModal() {
   if (!currentTaskId.value) return
+  const wasQueued = taskStatus.value === 'queued'
   await taskManager.cancelTask(currentTaskId.value)
-  // 排队取消后后端不 emit cancelled，弹窗需要手动切换到完成态
-  phase.value = 'done'
   const actionLabel = props.mode === 'copy' ? '复制' : '移动'
-  toast.add({
-    title: `${actionLabel}已取消`,
-    color: 'warning',
-  })
+  if (wasQueued) {
+    // 排队取消后端不 emit cancelled，弹窗需要手动切换到完成态
+    phase.value = 'done'
+    toast.add({
+      title: `${actionLabel}已取消`,
+      color: 'warning',
+    })
+  }
+  // running 取消：保留 SSE，等 cancelled 事件更新终态
 }
 
 function retryFailed() {

@@ -2,6 +2,7 @@ import {
   copyObjectStream,
   collectObjectsByPrefixes,
   inferContentType,
+  formatExecError,
 } from '#server/utils/minio'
 import type { TaskExecutor, Task } from '#server/utils/task-manager'
 import type { FileResult, TaskSummary, TaskEvent } from '#shared/schemas/task'
@@ -123,12 +124,24 @@ export async function copyObjectsPhase(
         data: { taskId: task.taskId, objectKey: key, result },
       })
     } catch (err: unknown) {
-      const errorMsg = err instanceof Error ? err.message : String(err)
+      const errorMsg = formatExecError(err)
       const result: FileResult = {
         status: 'failed',
         duration: Date.now() - startTime,
         error: errorMsg,
       }
+      task.fileProgress.results[key] = result
+      emit({
+        event: 'progress',
+        data: { taskId: task.taskId, objectKey: key, result },
+      })
+    }
+  }
+
+  // 取消时未开始的文件标记 skipped，并 emit 让前端列表同步
+  for (const key of keyArray) {
+    if (task.fileProgress.results[key]?.status === 'pending') {
+      const result: FileResult = { status: 'skipped' }
       task.fileProgress.results[key] = result
       emit({
         event: 'progress',

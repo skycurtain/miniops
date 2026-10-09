@@ -8,6 +8,7 @@ defineProps<{ title?: string }>()
       <span class="text-muted ms-1 hidden text-sm lg:inline">MinIO 批量运维平台</span>
     </template>
     <template #right>
+      <StagingManagerButton />
       <TaskViewerButton />
       <NuxtColorModeButton />
     </template>

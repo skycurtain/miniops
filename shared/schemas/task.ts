@@ -1,6 +1,16 @@
 /** 任务类型 */
 export type TaskType = 'dispatch' | 'copy' | 'move' | 'upload'
 
+/** 暂存文件列表项（GET /api/staging） */
+export interface StagedFileListItem {
+  fileId: string
+  objectKey: string
+  originalName: string
+  size: number
+  contentType: string
+  stagedAt: string
+}
+
 /** 任务状态 */
 export type TaskStatus = 'queued' | 'running' | 'done' | 'cancelled' | 'failed'
 

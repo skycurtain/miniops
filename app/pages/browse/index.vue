@@ -396,6 +396,19 @@ function onMoveTarget(target?: RowTarget) {
   copyMoveModalOpen.value = true
 }
 
+/** 复制对象/文件夹/当前目录路径到剪贴板 */
+async function onCopyPath(key: string) {
+  const tab = activeTab.value
+  if (!tab?.selectedBucket) return
+  const path = key ? `${tab.selectedBucket}/${key}` : tab.selectedBucket
+  try {
+    await navigator.clipboard.writeText(path)
+    toast.add({ title: '已复制路径', description: path, color: 'success' })
+  } catch {
+    toast.add({ title: '复制失败', color: 'error' })
+  }
+}
+
 function onDeleteTarget(target?: RowTarget) {
   if (target) singleTarget.value = target
   if (!activeTab.value) return
@@ -480,6 +493,7 @@ function onCopyMoveComplete(sourceInstanceId: string, targetInstanceId: string) 
                 @delete="onDeleteTarget"
                 @copy="onCopyTarget"
                 @move="onMoveTarget"
+                @copy-path="onCopyPath"
                 @preview="openPreview"
                 @toggle-select-all="toggleSelectAll(activeTab!)"
                 @toggle-select-key="(key: string) => toggleSelectKey(activeTab!, key)"

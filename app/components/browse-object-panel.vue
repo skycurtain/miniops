@@ -17,6 +17,7 @@ const emit = defineEmits<{
   delete: [target?: { type: 'object' | 'folder'; key: string }]
   copy: [target?: { type: 'object' | 'folder'; key: string }]
   move: [target?: { type: 'object' | 'folder'; key: string }]
+  'copy-path': [path: string]
   preview: [key: string]
   'toggle-select-all': []
   'toggle-select-key': [key: string]
@@ -219,6 +220,15 @@ function onTableScroll(e: Event) {
           label="移动"
           @click="emit('move')"
         />
+        <NuxtTooltip text="复制当前路径">
+          <NuxtButton
+            size="xs"
+            color="neutral"
+            variant="ghost"
+            icon="i-lucide-clipboard-copy"
+            @click="emit('copy-path', tab.currentPrefix)"
+          />
+        </NuxtTooltip>
         <NuxtTooltip text="刷新当前目录">
           <NuxtButton
             size="xs"
@@ -342,6 +352,15 @@ function onTableScroll(e: Event) {
                     @click="emit('move', { type: 'folder', key: row.original.key })"
                   />
                 </NuxtTooltip>
+                <NuxtTooltip text="复制路径">
+                  <NuxtButton
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-clipboard-copy"
+                    @click="emit('copy-path', row.original.key)"
+                  />
+                </NuxtTooltip>
                 <NuxtTooltip text="删除">
                   <NuxtButton
                     size="xs"
@@ -387,6 +406,15 @@ function onTableScroll(e: Event) {
                     variant="ghost"
                     icon="i-lucide-folder-input"
                     @click="emit('move', { type: 'object', key: row.original.key })"
+                  />
+                </NuxtTooltip>
+                <NuxtTooltip text="复制路径">
+                  <NuxtButton
+                    size="xs"
+                    color="neutral"
+                    variant="ghost"
+                    icon="i-lucide-clipboard-copy"
+                    @click="emit('copy-path', row.original.key)"
                   />
                 </NuxtTooltip>
                 <NuxtTooltip text="删除">

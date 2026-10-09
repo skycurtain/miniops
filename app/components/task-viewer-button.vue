@@ -56,7 +56,13 @@ const hasActive = computed(() => activeTasks.value.length > 0 || queueTasks.valu
 const activeCount = computed(() => activeTasks.value.length + queueTasks.value.length)
 
 const unviewedFailed = computed(() =>
-  completedTasks.value.filter(t => !t.viewed && t.status === 'failed'),
+  completedTasks.value.filter(t =>
+    !t.viewed
+    // 两种失败形态都显示 ! 角标：
+    // 1. status==='failed'：执行器抛异常（致命失败）
+    // 2. status==='done' && summary.failed>0：部分文件失败（单文件失败不致命）
+    && (t.status === 'failed' || (t.status === 'done' && (t.summary?.failed ?? 0) > 0)),
+  ),
 )
 
 const unviewedCancelled = computed(() =>
@@ -146,6 +152,20 @@ function toggleExpand(taskId: string) {
 
 // ==================== 进度计算 ====================
 function getTaskProgress(task: TaskState) {
+  // 执行中 summary 尚未生成，从 fileProgress 实时统计（与完成态口径一致：
+  // success/failed/skipped 计入已完成）
+  if (task.fileProgress?.results) {
+    const results = Object.values(task.fileProgress.results)
+    const total = results.length
+    const done = results.filter(r =>
+      r.status === 'success' || r.status === 'failed' || r.status === 'skipped',
+    ).length
+    return {
+      percent: total > 0 ? Math.round((done / total) * 100) : 0,
+      done,
+      total,
+    }
+  }
   const s = task.summary
   if (!s) return { percent: 0, done: 0, total: 0 }
   const done = s.success + s.failed + s.skipped

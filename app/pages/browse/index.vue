@@ -93,8 +93,16 @@ function switchTab(instanceId: string) {
 function restoreTabsFromRoute() {
   const tabsParam = route.query.tabs as string | undefined
   const activeParam = route.query.active as string | undefined
-  if (!tabsParam) return
-  const ids = tabsParam.split(',').filter(Boolean)
+  // 实例管理跳转用 ?instance=<id>，与 tabs/active 同源恢复
+  const instanceParam = route.query.instance as string | undefined
+
+  const ids = tabsParam
+    ? tabsParam.split(',').filter(Boolean)
+    : instanceParam
+      ? [instanceParam]
+      : []
+  if (!ids.length) return
+
   for (const id of ids) {
     const instance = findInstance(id)
     if (instance && !tabs.value.find((t) => t.instanceId === id)) {
@@ -103,11 +111,16 @@ function restoreTabsFromRoute() {
       loadBuckets(tab)
     }
   }
-  if (activeParam && tabs.value.find((t) => t.instanceId === activeParam)) {
-    activeTabId.value = activeParam
+
+  const preferActive = activeParam || instanceParam
+  if (preferActive && tabs.value.find((t) => t.instanceId === preferActive)) {
+    activeTabId.value = preferActive
   } else if (tabs.value.length) {
     activeTabId.value = tabs.value[0]!.instanceId
   }
+
+  // 把 instance 参数规范成 tabs/active，避免刷新后语义分叉
+  if (instanceParam) syncTabsToRoute()
 }
 
 restoreTabsFromRoute()

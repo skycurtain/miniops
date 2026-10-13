@@ -381,7 +381,7 @@ function summaryLabel(s?: { label: string }): string {
             实例管理
           </h1>
           <p class="text-muted">
-            管理实例组与组内 MinIO 实例
+            管理实例组与组内 S3 实例
           </p>
         </div>
         <div class="flex items-center gap-2">
@@ -709,13 +709,13 @@ function summaryLabel(s?: { label: string }): string {
               <NuxtInput v-model="instanceForm.endpoint" placeholder="http://127.0.0.1:9000" class="w-full" />
             </NuxtFormField>
             <NuxtFormField label="用户名" name="accessKey" required class="mt-4">
-              <NuxtInput v-model="instanceForm.accessKey" placeholder="如 minioadmin（Access Key）" class="w-full" />
+              <NuxtInput v-model="instanceForm.accessKey" placeholder="Access Key" class="w-full" />
             </NuxtFormField>
             <NuxtFormField label="密码" name="secretKey" required class="mt-4">
               <NuxtInput
                 v-model="instanceForm.secretKey"
                 :type="showSecretKey ? 'text' : 'password'"
-                placeholder="如 minioadmin（Secret Key）"
+                placeholder="Secret Key"
                 class="w-full"
               >
                 <template #trailing>

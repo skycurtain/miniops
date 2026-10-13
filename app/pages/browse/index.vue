@@ -438,7 +438,7 @@ function onCopyMoveComplete(sourceInstanceId: string, targetInstanceId: string) 
       <div class="flex shrink-0 items-center justify-between gap-4">
         <div class="flex flex-col gap-1">
           <h1 class="text-highlighted text-2xl font-bold">实例访问</h1>
-          <p class="text-muted">浏览和管理 MinIO 实例中的对象</p>
+          <p class="text-muted">浏览和管理 S3 实例中的对象</p>
         </div>
       </div>
 

@@ -49,7 +49,7 @@ const {
             文件分发
           </h1>
           <p class="text-muted">
-            将本地文件/文件夹批量分发到目标 MinIO 实例
+            将本地文件/文件夹批量分发到目标 S3 实例
           </p>
         </div>
         <div class="flex items-center gap-2">

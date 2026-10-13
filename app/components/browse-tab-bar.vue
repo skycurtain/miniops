@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import type { BrowseTab } from '~/pages/browse/types'
+import type { BrowseTab } from '~/types/browse'
 
 defineProps<{
   tabs: BrowseTab[]

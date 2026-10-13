@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { h, resolveComponent } from 'vue'
 import type { TableColumn } from '@nuxt/ui'
-import type { BrowseTab, BrowseTableRow } from '~/pages/browse/types'
+import type { BrowseTab, BrowseTableRow } from '~/types/browse'
 import { formatSize, formatDate, fileIcon, getPreviewType, displayName } from '~/utils/browse'
 
 const props = defineProps<{

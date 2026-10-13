@@ -2,7 +2,7 @@
 import type { InstanceGroup, MinioInstance } from '#shared/schemas/groups'
 import type { ObjectInfo, BucketInfo } from '#shared/schemas/browse'
 import { getPreviewType, type PreviewType } from '~/utils/browse'
-import type { BrowseTab, RowTarget } from '~/pages/browse/types'
+import type { BrowseTab, RowTarget } from '~/types/browse'
 
 definePageMeta({ layout: 'default' })
 

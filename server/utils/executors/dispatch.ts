@@ -1,19 +1,19 @@
-import { readFile } from 'node:fs/promises'
+﻿import { readFile } from 'node:fs/promises'
 import {
   uploadObjectStream,
   sanitizeObjectKey,
-} from '#server/utils/minio'
+} from '#server/utils/s3'
 import { getStagedFiles, removeStagedFile } from '#server/utils/staging'
 import { getGroups } from '#server/utils/store'
 import type { TaskExecutor, Task } from '#server/utils/task-manager'
 import type { InstanceProgress, FileResult, TaskSummary } from '#shared/schemas/task'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 
 const DISPATCH_CONCURRENCY = Number(process.env.DISPATCH_CONCURRENCY) || 5
 const TASK_DELAY_MS = Number(process.env.TASK_DELAY_MS) || 0
 
 /** 查找实例配置 */
-async function findInstance(instanceId: string): Promise<MinioInstance | undefined> {
+async function findInstance(instanceId: string): Promise<S3Instance | undefined> {
   const groups = await getGroups()
   for (const g of groups) {
     const inst = g.instances.find((i) => i.id === instanceId)
@@ -50,7 +50,7 @@ export function createDispatchExecutor(
       const stagedFiles = getStagedFiles(files.map((f) => f.fileId))
 
       // 查找所有目标实例配置
-      const instanceMap = new Map<string, MinioInstance>()
+      const instanceMap = new Map<string, S3Instance>()
       for (const target of targets) {
         const inst = await findInstance(target.instanceId)
         if (inst) instanceMap.set(target.instanceId, inst)

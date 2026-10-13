@@ -1,5 +1,5 @@
 import { getGroup } from '#server/utils/store'
-import { testGroupConnectivity } from '#server/utils/minio'
+import { testGroupConnectivity } from '#server/utils/s3'
 import type { ConnectivityResult } from '#shared/schemas/groups'
 
 export default defineEventHandler(async (event) => {
@@ -18,7 +18,7 @@ export default defineEventHandler(async (event) => {
     if (!instance) {
       throw createError({ statusCode: 404, message: '实例不存在' })
     }
-    const { testConnectivity } = await import('#server/utils/minio')
+    const { testConnectivity } = await import('#server/utils/s3')
     results = [await testConnectivity(instance)]
   } else {
     // 测试组内所有 enabled 实例

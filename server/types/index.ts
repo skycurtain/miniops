@@ -1,6 +1,6 @@
 // Re-export 共享类型和 schema，供 server 端使用
 export type {
-  MinioInstance,
+  S3Instance,
   InstanceGroup,
   CreateGroupInput,
   UpdateGroupInput,
@@ -11,7 +11,7 @@ export type {
 } from '#shared/schemas/groups'
 
 export {
-  minioInstanceSchema,
+  s3InstanceSchema,
   instanceGroupSchema,
   createGroupSchema,
   updateGroupSchema,

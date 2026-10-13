@@ -1,9 +1,9 @@
-import { getGroups } from '#server/utils/store'
+﻿import { getGroups } from '#server/utils/store'
 import { createTask } from '#server/utils/task-manager'
 import { createUploadExecutor } from '#server/utils/executors/upload'
 import { getStagedFiles } from '#server/utils/staging'
-import { sanitizeObjectKey } from '#server/utils/minio'
-import type { MinioInstance } from '#shared/schemas/groups'
+import { sanitizeObjectKey } from '#server/utils/s3'
+import type { S3Instance } from '#shared/schemas/groups'
 import type { TaskDescription } from '#shared/schemas/task'
 
 /**
@@ -41,7 +41,7 @@ export default defineEventHandler(async (event) => {
 
   // 从 store 查出实例
   const allGroups = await getGroups()
-  let instance: MinioInstance | undefined
+  let instance: S3Instance | undefined
   for (const g of allGroups) {
     instance = g.instances.find((i) => i.id === body.instanceId)
     if (instance) break

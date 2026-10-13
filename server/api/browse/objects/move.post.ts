@@ -1,7 +1,7 @@
-import { getGroups } from '#server/utils/store'
+﻿import { getGroups } from '#server/utils/store'
 import { createTask } from '#server/utils/task-manager'
 import { createMoveExecutor } from '#server/utils/executors/move'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 import type { TaskDescription } from '#shared/schemas/task'
 
 /**
@@ -34,7 +34,7 @@ export default defineEventHandler(async (event) => {
 
   // 查找源/目标实例
   const allGroups = await getGroups()
-  const findInstance = (id: string): MinioInstance | undefined => {
+  const findInstance = (id: string): S3Instance | undefined => {
     for (const g of allGroups) {
       const inst = g.instances.find((i) => i.id === id)
       if (inst) return inst

@@ -12,7 +12,7 @@ import {
 import type { FinalizeRequestMiddleware } from '@aws-sdk/types'
 import type { Readable } from 'node:stream'
 import { createHash } from 'node:crypto'
-import type { MinioInstance, ConnectivityResult } from '#shared/schemas/groups'
+import type { S3Instance, ConnectivityResult } from '#shared/schemas/groups'
 import type {
   BucketInfo,
   ObjectInfo,
@@ -21,7 +21,7 @@ import type {
 } from '#shared/schemas/browse'
 // ===== 客户端创建 =====
 
-export function createS3Client(instance: MinioInstance): S3Client {
+export function createS3Client(instance: S3Instance): S3Client {
   return new S3Client({
     endpoint: instance.endpoint,
     region: 'us-east-1',
@@ -35,7 +35,7 @@ export function createS3Client(instance: MinioInstance): S3Client {
 
 // ===== 连通性测试 =====
 
-export async function testConnectivity(instance: MinioInstance): Promise<ConnectivityResult> {
+export async function testConnectivity(instance: S3Instance): Promise<ConnectivityResult> {
   const result: ConnectivityResult = {
     instanceId: instance.id,
     instanceName: instance.name,
@@ -88,7 +88,7 @@ export async function testConnectivity(instance: MinioInstance): Promise<Connect
 // ===== 整组并发测试 =====
 
 export async function testGroupConnectivity(
-  instances: MinioInstance[],
+  instances: S3Instance[],
 ): Promise<ConnectivityResult[]> {
   const enabled = instances.filter((i) => i.enabled)
   return Promise.all(enabled.map((inst) => testConnectivity(inst)))
@@ -139,7 +139,7 @@ export function formatExecError(err: unknown): string {
  * 调用 SDK ListBucketsCommand，返回 bucket 名称和创建日期。
  * 与连通性测试中的 ListBucketsCommand 区别：这里返回完整元数据。
  */
-export async function listBucketsWithMeta(instance: MinioInstance): Promise<{
+export async function listBucketsWithMeta(instance: S3Instance): Promise<{
   buckets: BucketInfo[]
   error?: string
 }> {
@@ -191,7 +191,7 @@ export function sanitizeObjectKey(key: string): string {
  * @param continuationToken 上一页返回的 NextContinuationToken
  */
 export async function listObjects(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   prefix: string,
   delimiter: string = '/',
@@ -248,7 +248,7 @@ export async function listObjects(
  * SDK DeleteObjectsCommand，一次最多 1000 个。
  */
 export async function deleteObjects(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   keys: string[],
 ): Promise<DeleteObjectsResult> {
@@ -273,7 +273,7 @@ export async function deleteObjects(
  * 由 deleteObjects 和 deleteByPrefixes 内部调用。
  */
 async function deleteObjectsBatch(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   keys: string[],
 ): Promise<DeleteObjectsResult> {
@@ -289,7 +289,7 @@ async function deleteObjectsBatch(
       },
     })
 
-    // MinIO 要求 Content-MD5 头，SDK v3 不自动添加
+    // DeleteObjects 需要 Content-MD5 头，SDK v3 不自动添加
     // 通过 command 级 middleware 注入
     const md5Middleware: FinalizeRequestMiddleware<DeleteObjectsCommandInput, DeleteObjectsCommandOutput> =
       next => async (args) => {
@@ -335,7 +335,7 @@ async function deleteObjectsBatch(
  * 再分批调 deleteObjects（每批 1000 个）。
  */
 export async function deleteByPrefixes(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   prefixes: string[],
 ): Promise<DeleteObjectsResult> {
@@ -378,7 +378,7 @@ export async function deleteByPrefixes(
  * 不缓冲整个文件到内存，支持大文件流式下载。
  */
 export async function getObjectStream(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   objectKey: string,
   rangeHeader?: string,
@@ -433,7 +433,7 @@ export async function getObjectStream(
  * 所以上游传入的 contentType 必须是按扩展名推断出的纯净值。
  */
 export async function uploadObjectStream(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   objectKey: string,
   body: Readable | ReadableStream | Blob | Uint8Array,
@@ -507,10 +507,10 @@ export function inferContentType(filename: string): string {
  * 跨实例时必须 GetObject + PutObject 流式直传。
  */
 export async function copyObjectStream(
-  sourceInstance: MinioInstance,
+  sourceInstance: S3Instance,
   sourceBucket: string,
   sourceKey: string,
-  targetInstance: MinioInstance,
+  targetInstance: S3Instance,
   targetBucket: string,
   targetKey: string,
   contentType?: string,
@@ -566,7 +566,7 @@ export async function copyObjectStream(
  * 超过 COPY_MOVE_MAX_OBJECTS 上限时抛错。
  */
 export async function collectObjectsByPrefixes(
-  instance: MinioInstance,
+  instance: S3Instance,
   bucket: string,
   prefixes: string[],
   maxObjects: number = Number(process.env.COPY_MOVE_MAX_OBJECTS) || 10000,

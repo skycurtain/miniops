@@ -1,7 +1,7 @@
-import { getGroups } from '#server/utils/store'
-import { listObjects, getObjectStream } from '#server/utils/minio'
+﻿import { getGroups } from '#server/utils/store'
+import { listObjects, getObjectStream } from '#server/utils/s3'
 import { ZipArchive } from 'archiver'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 
 /** 批量 ZIP 打包的对象数量上限 */
 const BATCH_DOWNLOAD_COUNT_LIMIT = Number(process.env.DOWNLOAD_MAX_OBJECTS) || 1000
@@ -35,7 +35,7 @@ export default defineEventHandler(async (event) => {
 
   // 从 store 查出实例
   const allGroups = await getGroups()
-  let instance: MinioInstance | undefined
+  let instance: S3Instance | undefined
   for (const g of allGroups) {
     instance = g.instances.find((i) => i.id === body.instanceId)
     if (instance) break

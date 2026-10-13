@@ -1,16 +1,16 @@
-import { readFile } from 'node:fs/promises'
-import { uploadObjectStream, inferContentType, formatExecError } from '#server/utils/minio'
+﻿import { readFile } from 'node:fs/promises'
+import { uploadObjectStream, inferContentType, formatExecError } from '#server/utils/s3'
 import { getStagedFiles, removeStagedFile } from '#server/utils/staging'
 import type { TaskExecutor, Task } from '#server/utils/task-manager'
 import type { FileResult, TaskSummary } from '#shared/schemas/task'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 
 const TASK_DELAY_MS = Number(process.env.TASK_DELAY_MS) || 0
 
 /** 上传任务参数（API 层查找实例后传入，executor 不依赖 store.ts） */
 export interface UploadParams {
   files: { fileId: string; objectKey: string }[] // 已暂存的文件 + 相对 objectKey
-  instance: MinioInstance
+  instance: S3Instance
   bucket: string
   prefix: string // 目标前缀（已由 API 层 sanitizeObjectKey 清洗）
 }

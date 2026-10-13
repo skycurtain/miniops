@@ -1,6 +1,6 @@
-import { getGroups } from '#server/utils/store'
-import { listBucketsWithMeta } from '#server/utils/minio'
-import type { MinioInstance } from '#shared/schemas/groups'
+﻿import { getGroups } from '#server/utils/store'
+import { listBucketsWithMeta } from '#server/utils/s3'
+import type { S3Instance } from '#shared/schemas/groups'
 
 /**
  * GET /api/browse/buckets?instanceId=xxx
@@ -16,7 +16,7 @@ export default defineEventHandler(async (event) => {
 
   // 从 store 查出实例
   const allGroups = await getGroups()
-  let instance: MinioInstance | undefined
+  let instance: S3Instance | undefined
   for (const g of allGroups) {
     instance = g.instances.find((i) => i.id === instanceId)
     if (instance) break

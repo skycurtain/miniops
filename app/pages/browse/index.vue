@@ -1,5 +1,5 @@
-<script setup lang="ts">
-import type { InstanceGroup, MinioInstance } from '#shared/schemas/groups'
+﻿<script setup lang="ts">
+import type { InstanceGroup, S3Instance } from '#shared/schemas/groups'
 import type { ObjectInfo, BucketInfo } from '#shared/schemas/browse'
 import { getPreviewType, type PreviewType } from '~/utils/browse'
 import type { BrowseTab, RowTarget } from '~/types/browse'
@@ -21,7 +21,7 @@ const { data: groups } = await useFetch<InstanceGroup[]>('/api/manage/groups', {
 const tabs = ref<BrowseTab[]>([])
 const activeTabId = ref<string>('')
 
-function createTab(instance: MinioInstance): BrowseTab {
+function createTab(instance: S3Instance): BrowseTab {
   return {
     instanceId: instance.id,
     instanceName: instance.name,
@@ -55,7 +55,7 @@ function syncTabsToRoute() {
   })
 }
 
-function findInstance(id: string): MinioInstance | undefined {
+function findInstance(id: string): S3Instance | undefined {
   for (const g of groups.value ?? []) {
     const inst = g.instances.find((i) => i.id === id && i.enabled)
     if (inst) return inst
@@ -63,7 +63,7 @@ function findInstance(id: string): MinioInstance | undefined {
   return undefined
 }
 
-function openInstance(instance: MinioInstance) {
+function openInstance(instance: S3Instance) {
   const existing = tabs.value.find((t) => t.instanceId === instance.id)
   if (existing) {
     activeTabId.value = instance.id

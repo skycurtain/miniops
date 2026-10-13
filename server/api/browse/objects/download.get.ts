@@ -1,7 +1,7 @@
-import { getGroups } from '#server/utils/store'
-import { getObjectStream } from '#server/utils/minio'
+﻿import { getGroups } from '#server/utils/store'
+import { getObjectStream } from '#server/utils/s3'
 import { sendStream } from 'h3'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 
 /**
  * GET /api/browse/objects/download?instanceId=&bucket=&key=&inline=1
@@ -31,7 +31,7 @@ export default defineEventHandler(async (event) => {
 
   // 从 store 查出实例
   const allGroups = await getGroups()
-  let instance: MinioInstance | undefined
+  let instance: S3Instance | undefined
   for (const g of allGroups) {
     instance = g.instances.find((i) => i.id === instanceId)
     if (instance) break

@@ -1,5 +1,5 @@
-import { stageFile } from '#server/utils/staging'
-import { sanitizeObjectKey, inferContentType } from '#server/utils/minio'
+﻿import { stageFile } from '#server/utils/staging'
+import { sanitizeObjectKey, inferContentType } from '#server/utils/s3'
 
 /**
  * POST /api/browse/objects/stage

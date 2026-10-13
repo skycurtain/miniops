@@ -1,6 +1,6 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import type { TableColumn, DropdownMenuItem } from '@nuxt/ui'
-import type { InstanceGroup, MinioInstance } from '#shared/schemas/groups'
+import type { InstanceGroup, S3Instance } from '#shared/schemas/groups'
 import { createGroupSchema, createInstanceSchema } from '#shared/schemas/groups'
 
 definePageMeta({ layout: 'default' })
@@ -28,7 +28,7 @@ watch(groups, (val) => {
 }, { immediate: true })
 
 // ==================== 表格列定义 ====================
-const columns: TableColumn<MinioInstance>[] = [
+const columns: TableColumn<S3Instance>[] = [
   { accessorKey: 'name', header: '名称' },
   { accessorKey: 'endpoint', header: 'Endpoint' },
   { accessorKey: 'enabled', header: '状态', meta: { class: { th: 'w-20', td: 'w-20' } } },
@@ -143,7 +143,7 @@ function openInstanceCreate(groupId: string) {
   instanceModalOpen.value = true
 }
 
-function openInstanceEdit(groupId: string, instance: MinioInstance) {
+function openInstanceEdit(groupId: string, instance: S3Instance) {
   instanceModalMode.value = 'edit'
   instanceEditingGroupId.value = groupId
   instanceEditingId.value = instance.id
@@ -240,7 +240,7 @@ function onDeleteGroup(group: InstanceGroup) {
   )
 }
 
-function onDeleteInstance(group: InstanceGroup, instance: MinioInstance) {
+function onDeleteInstance(group: InstanceGroup, instance: S3Instance) {
   openConfirm('删除实例', `确定删除实例「${instance.name}」？`, async () => {
     await $fetch(`/api/manage/groups/${group.id}/instances/${instance.id}`, { method: 'DELETE' })
     await refresh()
@@ -249,7 +249,7 @@ function onDeleteInstance(group: InstanceGroup, instance: MinioInstance) {
 }
 
 // ==================== 复制实例 ====================
-async function onDuplicateInstance(group: InstanceGroup, instance: MinioInstance) {
+async function onDuplicateInstance(group: InstanceGroup, instance: S3Instance) {
   try {
     await $fetch(`/api/manage/groups/${group.id}/instances/${instance.id}/duplicate`, { method: 'POST' })
     await refresh()
@@ -261,7 +261,7 @@ async function onDuplicateInstance(group: InstanceGroup, instance: MinioInstance
 }
 
 // ==================== 启用/禁用 ====================
-async function onToggleEnabled(group: InstanceGroup, instance: MinioInstance) {
+async function onToggleEnabled(group: InstanceGroup, instance: S3Instance) {
   try {
     await $fetch(`/api/manage/groups/${group.id}/instances/${instance.id}`, {
       method: 'PUT',
@@ -354,7 +354,7 @@ async function onImportFile(event: Event) {
 }
 
 // ==================== 连通性测试 ====================
-async function testOne(groupId: string, instance: MinioInstance) {
+async function testOne(groupId: string, instance: S3Instance) {
   await testInstance(groupId, instance.id)
 }
 

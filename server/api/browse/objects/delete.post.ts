@@ -1,6 +1,6 @@
-import { getGroups } from '#server/utils/store'
-import { deleteObjects, deleteByPrefixes } from '#server/utils/minio'
-import type { MinioInstance } from '#shared/schemas/groups'
+﻿import { getGroups } from '#server/utils/store'
+import { deleteObjects, deleteByPrefixes } from '#server/utils/s3'
+import type { S3Instance } from '#shared/schemas/groups'
 
 /**
  * POST /api/browse/objects/delete
@@ -29,7 +29,7 @@ export default defineEventHandler(async (event) => {
 
   // 从 store 查出实例
   const allGroups = await getGroups()
-  let instance: MinioInstance | undefined
+  let instance: S3Instance | undefined
   for (const g of allGroups) {
     instance = g.instances.find((i) => i.id === body.instanceId)
     if (instance) break

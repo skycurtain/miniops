@@ -1,7 +1,7 @@
 import * as v from 'valibot'
 
 /** MinIO 实例 */
-export const minioInstanceSchema = v.object({
+export const s3InstanceSchema = v.object({
   id: v.string(),
   groupId: v.string(),
   name: v.string(),
@@ -10,14 +10,14 @@ export const minioInstanceSchema = v.object({
   secretKey: v.string(),
   enabled: v.boolean(),
 })
-export type MinioInstance = v.InferOutput<typeof minioInstanceSchema>
+export type S3Instance = v.InferOutput<typeof s3InstanceSchema>
 
 /** 实例组 */
 export const instanceGroupSchema = v.object({
   id: v.string(),
   name: v.string(),
   description: v.optional(v.string()),
-  instances: v.array(minioInstanceSchema),
+  instances: v.array(s3InstanceSchema),
   isDefault: v.optional(v.boolean()),
   createdAt: v.string(),
   updatedAt: v.string(),

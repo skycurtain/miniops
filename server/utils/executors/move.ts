@@ -1,4 +1,4 @@
-import { deleteObjects } from '#server/utils/minio'
+﻿import { deleteObjects } from '#server/utils/s3'
 import { copyObjectsPhase, type CopyParams } from './copy'
 import type { TaskExecutor, Task } from '#server/utils/task-manager'
 import type { FileResult, TaskSummary, TaskEvent } from '#shared/schemas/task'

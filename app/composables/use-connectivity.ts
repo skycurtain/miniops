@@ -1,4 +1,4 @@
-import type { ConnectivityResult, InstanceGroup, MinioInstance } from '#shared/schemas/groups'
+﻿import type { ConnectivityResult, InstanceGroup, S3Instance } from '#shared/schemas/groups'
 
 /** 展示状态类型 */
 type ConnectivityDisplay = 'testing' | null | 'offline' | 'auth-error' | 'online'
@@ -28,7 +28,7 @@ export function useConnectivity() {
     }
   }
 
-  async function testGroup(groupId: string, instances: MinioInstance[]) {
+  async function testGroup(groupId: string, instances: S3Instance[]) {
     const enabled = instances.filter((i) => i.enabled)
     if (!enabled.length) return
 

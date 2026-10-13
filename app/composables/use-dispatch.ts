@@ -1,6 +1,6 @@
-import { formatSize, fileIcon } from '~/utils/browse'
+﻿import { formatSize, fileIcon } from '~/utils/browse'
 import type { TreeItem } from '@nuxt/ui'
-import type { InstanceGroup, MinioInstance } from '#shared/schemas/groups'
+import type { InstanceGroup, S3Instance } from '#shared/schemas/groups'
 import type { BucketInfo } from '#shared/schemas/browse'
 import type { FileResult } from '#shared/schemas/task'
 import { useTaskManager } from '~/composables/use-task-manager'
@@ -48,7 +48,7 @@ export interface DispatchComposable {
   refresh: () => Promise<void>
   treeItems: ComputedRef<DispatchTreeItem[]>
   findGroupById: (id: string) => InstanceGroup | undefined
-  findInstanceById: (id: string) => MinioInstance | undefined
+  findInstanceById: (id: string) => S3Instance | undefined
   onInstanceNodeClick: (instId: string) => void
   showGroupBucketRow: (g: InstanceGroup) => boolean
 
@@ -61,7 +61,7 @@ export interface DispatchComposable {
   loadBuckets: (instId: string) => Promise<BucketInfo[]>
   getBuckets: (instId: string) => BucketInfo[]
   reloadBuckets: (instId: string) => Promise<void>
-  toggleInstance: (inst: MinioInstance) => void
+  toggleInstance: (inst: S3Instance) => void
   isGroupAllSelected: (g: InstanceGroup) => boolean
   isGroupPartialSelected: (g: InstanceGroup) => boolean
   toggleGroup: (g: InstanceGroup) => void
@@ -71,7 +71,7 @@ export interface DispatchComposable {
   applyBucketToAll: (bucket: string) => void
   commonBucketValue: ComputedRef<string | undefined>
   findGroupByInstanceId: (instanceId: string) => InstanceGroup | undefined
-  selectedInstancesList: ComputedRef<MinioInstance[]>
+  selectedInstancesList: ComputedRef<S3Instance[]>
   prefix: Ref<string>
 
   // 文件选择
@@ -162,7 +162,7 @@ export function useDispatch(): DispatchComposable {
     return groupsData.value?.find(g => g.id === id)
   }
 
-  function findInstance(id: string): MinioInstance | undefined {
+  function findInstance(id: string): S3Instance | undefined {
     for (const g of groupsData.value ?? []) {
       const inst = g.instances.find(i => i.id === id)
       if (inst) return inst
@@ -170,7 +170,7 @@ export function useDispatch(): DispatchComposable {
     return undefined
   }
 
-  function findInstanceById(id: string): MinioInstance | undefined {
+  function findInstanceById(id: string): S3Instance | undefined {
     return findInstance(id)
   }
 
@@ -194,8 +194,8 @@ export function useDispatch(): DispatchComposable {
   const bucketError = ref<Record<string, string>>({})
 
   /** 选中实例列表（按 groups 顺序） */
-  const selectedInstancesList = computed<MinioInstance[]>(() => {
-    const list: MinioInstance[] = []
+  const selectedInstancesList = computed<S3Instance[]>(() => {
+    const list: S3Instance[] = []
     for (const g of groupsData.value ?? []) {
       for (const i of g.instances) {
         if (selectedInstances.value.has(i.id)) list.push(i)
@@ -244,7 +244,7 @@ export function useDispatch(): DispatchComposable {
     await loadBuckets(instId)
   }
 
-  function toggleInstance(inst: MinioInstance) {
+  function toggleInstance(inst: S3Instance) {
     if (!inst.enabled) return
     if (selectedInstances.value.has(inst.id)) {
       const next = new Set(selectedInstances.value)

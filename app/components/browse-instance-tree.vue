@@ -1,6 +1,6 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import type { TreeItem } from '@nuxt/ui'
-import type { InstanceGroup, MinioInstance } from '#shared/schemas/groups'
+import type { InstanceGroup, S3Instance } from '#shared/schemas/groups'
 
 const props = defineProps<{
   groups: InstanceGroup[]
@@ -9,7 +9,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-  open: [instance: MinioInstance]
+  open: [instance: S3Instance]
 }>()
 
 interface InstanceTreeItem extends TreeItem {
@@ -35,7 +35,7 @@ const treeItems = computed<InstanceTreeItem[]>(() =>
   })),
 )
 
-function findInstance(id: string): MinioInstance | undefined {
+function findInstance(id: string): S3Instance | undefined {
   for (const g of props.groups) {
     const inst = g.instances.find((i) => i.id === id)
     if (inst) return inst

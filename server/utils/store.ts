@@ -1,11 +1,11 @@
-import { promises as fs } from 'node:fs'
+﻿import { promises as fs } from 'node:fs'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type {
   InstanceGroup,
   CreateGroupInput,
   UpdateGroupInput,
-  MinioInstance,
+  S3Instance,
   CreateInstanceInput,
   UpdateInstanceInput,
   ImportResult,
@@ -133,12 +133,12 @@ export async function deleteGroup(id: string): Promise<void> {
 export async function addInstance(
   groupId: string,
   input: CreateInstanceInput,
-): Promise<MinioInstance> {
+): Promise<S3Instance> {
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
     if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
-    const instance: MinioInstance = {
+    const instance: S3Instance = {
       id: generateInstanceId(),
       groupId,
       ...input,
@@ -154,7 +154,7 @@ export async function updateInstance(
   groupId: string,
   instanceId: string,
   input: UpdateInstanceInput,
-): Promise<MinioInstance | null> {
+): Promise<S3Instance | null> {
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
@@ -182,14 +182,14 @@ export async function deleteInstance(groupId: string, instanceId: string): Promi
 export async function duplicateInstance(
   groupId: string,
   instanceId: string,
-): Promise<MinioInstance> {
+): Promise<S3Instance> {
   return withLock(async () => {
     const groups = await readRaw()
     const group = groups.find((g) => g.id === groupId)
     if (!group) throw createError({ statusCode: 404, message: '分组不存在' })
     const source = group.instances.find((i) => i.id === instanceId)
     if (!source) throw createError({ statusCode: 404, message: '实例不存在' })
-    const copy: MinioInstance = {
+    const copy: S3Instance = {
       ...source,
       id: generateInstanceId(),
       name: `${source.name}(副本)`,

@@ -1,23 +1,23 @@
-import {
+﻿import {
   copyObjectStream,
   collectObjectsByPrefixes,
   inferContentType,
   formatExecError,
-} from '#server/utils/minio'
+} from '#server/utils/s3'
 import type { TaskExecutor, Task } from '#server/utils/task-manager'
 import type { FileResult, TaskSummary, TaskEvent } from '#shared/schemas/task'
-import type { MinioInstance } from '#shared/schemas/groups'
+import type { S3Instance } from '#shared/schemas/groups'
 
 const TASK_DELAY_MS = Number(process.env.TASK_DELAY_MS) || 0
 
 /** 复制/移动参数（API 层查找实例后传入，executor 不依赖 store.ts） */
 export interface CopyParams {
-  sourceInstance: MinioInstance
+  sourceInstance: S3Instance
   sourceBucket: string
   sourcePrefix: string
   keys: string[]
   prefixes: string[]
-  targetInstance: MinioInstance
+  targetInstance: S3Instance
   targetBucket: string
   targetPrefix: string
 }

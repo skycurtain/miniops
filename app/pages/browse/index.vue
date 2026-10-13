@@ -9,6 +9,8 @@ definePageMeta({ layout: 'default' })
 const route = useRoute()
 const router = useRouter()
 const toast = useToast()
+// legacy: true — HTTP 非安全上下文下 navigator.clipboard 不可用时回退 execCommand
+const { copy: copyToClipboard } = useClipboard({ legacy: true })
 
 // ==================== 数据 ====================
 const { data: groups } = await useFetch<InstanceGroup[]>('/api/manage/groups', {
@@ -402,7 +404,7 @@ async function onCopyPath(key: string) {
   if (!tab?.selectedBucket) return
   const path = key ? `${tab.selectedBucket}/${key}` : tab.selectedBucket
   try {
-    await navigator.clipboard.writeText(path)
+    await copyToClipboard(path)
     toast.add({ title: '已复制路径', description: path, color: 'success' })
   } catch {
     toast.add({ title: '复制失败', color: 'error' })

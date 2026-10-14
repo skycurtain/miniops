@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import type { TableColumn, DropdownMenuItem } from '@nuxt/ui'
 import type { InstanceGroup, S3Instance } from '#shared/schemas/groups'
 import { createGroupSchema, createInstanceSchema } from '#shared/schemas/groups'
@@ -122,6 +122,7 @@ const instanceForm = reactive({
   accessKey: '',
   secretKey: '',
   enabled: true,
+  region: '',
 })
 const instanceFormRef = ref()
 const instanceSubmitting = ref(false)
@@ -140,6 +141,7 @@ function openInstanceCreate(groupId: string) {
   instanceForm.accessKey = ''
   instanceForm.secretKey = ''
   instanceForm.enabled = true
+  instanceForm.region = ''
   instanceModalOpen.value = true
 }
 
@@ -152,6 +154,7 @@ function openInstanceEdit(groupId: string, instance: S3Instance) {
   instanceForm.accessKey = instance.accessKey
   instanceForm.secretKey = instance.secretKey
   instanceForm.enabled = instance.enabled
+  instanceForm.region = instance.region ?? ''
   instanceModalOpen.value = true
 }
 
@@ -168,6 +171,7 @@ async function onInstanceSubmit() {
           accessKey: instanceForm.accessKey,
           secretKey: instanceForm.secretKey,
           enabled: instanceForm.enabled,
+          region: instanceForm.region.trim() || undefined,
         },
       })
       toast.add({ title: '创建成功', description: `实例「${instanceForm.name}」已添加`, color: 'success' })
@@ -181,6 +185,7 @@ async function onInstanceSubmit() {
           accessKey: instanceForm.accessKey,
           secretKey: instanceForm.secretKey,
           enabled: instanceForm.enabled,
+          region: instanceForm.region.trim() || undefined,
         },
       })
       toast.add({ title: '修改成功', description: `实例「${instanceForm.name}」已更新`, color: 'success' })
@@ -707,6 +712,9 @@ function summaryLabel(s?: { label: string }): string {
             </NuxtFormField>
             <NuxtFormField label="服务端点" name="endpoint" required class="mt-4">
               <NuxtInput v-model="instanceForm.endpoint" placeholder="http://127.0.0.1:9000" class="w-full" />
+            </NuxtFormField>
+            <NuxtFormField label="Region" name="region" class="mt-4" help="留空默认 us-east-1；AWS S3 等按 region 校验的服务需填写">
+              <NuxtInput v-model="instanceForm.region" placeholder="us-east-1" class="w-full" />
             </NuxtFormField>
             <NuxtFormField label="用户名" name="accessKey" required class="mt-4">
               <NuxtInput v-model="instanceForm.accessKey" placeholder="Access Key" class="w-full" />

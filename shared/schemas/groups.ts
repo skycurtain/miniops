@@ -1,6 +1,6 @@
 import * as v from 'valibot'
 
-/** MinIO 实例 */
+/** S3 实例 */
 export const s3InstanceSchema = v.object({
   id: v.string(),
   groupId: v.string(),
@@ -9,6 +9,8 @@ export const s3InstanceSchema = v.object({
   accessKey: v.string(),
   secretKey: v.string(),
   enabled: v.boolean(),
+  /** S3 region，留空默认 us-east-1（自建对象存储通常不校验） */
+  region: v.optional(v.string()),
 })
 export type S3Instance = v.InferOutput<typeof s3InstanceSchema>
 
@@ -47,6 +49,7 @@ export const createInstanceSchema = v.object({
   accessKey: v.pipe(v.string(), v.minLength(1, 'accessKey 不能为空')),
   secretKey: v.pipe(v.string(), v.minLength(1, 'secretKey 不能为空')),
   enabled: v.boolean(),
+  region: v.optional(v.string()),
 })
 export type CreateInstanceInput = v.InferOutput<typeof createInstanceSchema>
 

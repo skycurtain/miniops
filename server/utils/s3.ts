@@ -24,7 +24,7 @@ import type {
 export function createS3Client(instance: S3Instance): S3Client {
   return new S3Client({
     endpoint: instance.endpoint,
-    region: 'us-east-1',
+    region: instance.region?.trim() || 'us-east-1',
     credentials: {
       accessKeyId: instance.accessKey,
       secretAccessKey: instance.secretKey,
@@ -35,6 +35,80 @@ export function createS3Client(instance: S3Instance): S3Client {
 
 // ===== 连通性测试 =====
 
+/** MinIO 系 health 路径（MinIO / SILO / RustFS 均提供） */
+const MINIO_HEALTH_PATH = '/minio/health/live'
+
+type LivenessProbe =
+  | { kind: 'minio-health'; latency: number }
+  | { kind: 's3-auth-ok'; latency: number }
+  | { kind: 's3-reachable'; latency: number }
+  | { kind: 'offline'; error: string }
+
+function networkErrorMessage(e: unknown): string {
+  if (e instanceof Error) {
+    if (e.name === 'AbortError') return '连接超时'
+    const parts = (e as { errors?: unknown[] }).errors
+    if (parts?.length) {
+      return parts.map((x) => (x instanceof Error ? x.message : String(x))).join('; ')
+    }
+    return e.message || '网络不可达'
+  }
+  return '网络不可达'
+}
+
+/**
+ * 探活：优先 MinIO 系 /minio/health/live；
+ * 该路径不存在或不可用时降级用 ListBuckets（标准 S3，兼作凭据校验）。
+ */
+async function probeLiveness(instance: S3Instance): Promise<LivenessProbe> {
+  const start = Date.now()
+  const healthUrl = `${instance.endpoint}${MINIO_HEALTH_PATH}`
+
+  // 1) MinIO 系 health（无需鉴权）
+  let healthUnsupported = false
+  try {
+    const controller = new AbortController()
+    const timeout = setTimeout(() => controller.abort(), 5000)
+    const res = await fetch(healthUrl, { signal: controller.signal })
+    clearTimeout(timeout)
+    if (res.ok) {
+      return { kind: 'minio-health', latency: Date.now() - start }
+    }
+    // 服务有响应但无此路径（404/405 等）→ 降级
+    healthUnsupported = true
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      // health 超时：端点可能仍在，继续用 S3 探活
+      healthUnsupported = true
+    } else {
+      // 连接被拒等：多半整机不可达，仍尝试 S3 探活（有些网关只暴露 S3 端口）
+      healthUnsupported = true
+    }
+  }
+
+  // 2) 降级：ListBuckets（200=在线且凭据有效；403=在线但凭据无效）
+  if (healthUnsupported) {
+    try {
+      const client = createS3Client(instance)
+      await client.send(new ListBucketsCommand({}), { requestTimeout: 10000 })
+      return { kind: 's3-auth-ok', latency: Date.now() - start }
+    } catch (e: unknown) {
+      const err = e as { name?: string; $metadata?: { httpStatusCode?: number } }
+      const statusCode = err.$metadata?.httpStatusCode
+      if (statusCode === 403 || err.name === 'AccessDenied') {
+        return { kind: 's3-reachable', latency: Date.now() - start }
+      }
+      if (statusCode && statusCode < 500) {
+        // 有 HTTP 响应即视为服务可达（签名/参数类错误）
+        return { kind: 's3-reachable', latency: Date.now() - start }
+      }
+      return { kind: 'offline', error: networkErrorMessage(e) }
+    }
+  }
+
+  return { kind: 'offline', error: '探活失败' }
+}
+
 export async function testConnectivity(instance: S3Instance): Promise<ConnectivityResult> {
   const result: ConnectivityResult = {
     instanceId: instance.id,
@@ -43,29 +117,23 @@ export async function testConnectivity(instance: S3Instance): Promise<Connectivi
     online: false,
   }
 
-  // Step 1: health/live（原生 fetch，不走 SDK）
-  const healthUrl = `${instance.endpoint}/minio/health/live`
-  const healthStart = Date.now()
-  try {
-    const controller = new AbortController()
-    const timeout = setTimeout(() => controller.abort(), 5000)
-    const res = await fetch(healthUrl, { signal: controller.signal })
-    clearTimeout(timeout)
-    if (!res.ok) {
-      result.online = false
-      result.error = `health/live 返回 ${res.status}`
-      return result
-    }
-    result.online = true
-    result.latency = Date.now() - healthStart
-  } catch (e) {
+  // Step 1: 探活（MinIO health → 降级 ListBuckets）
+  const probe = await probeLiveness(instance)
+  if (probe.kind === 'offline') {
     result.online = false
-    result.error =
-      e instanceof Error ? (e.name === 'AbortError' ? '连接超时（5s）' : e.message) : '网络不可达'
+    result.error = probe.error
     return result
   }
 
-  // Step 2: listBuckets（走 SDK，验证凭据）
+  result.online = true
+  result.latency = probe.latency
+
+  // Step 2: 凭据校验（降级路径若已用 ListBuckets 成功，可直接认定）
+  if (probe.kind === 's3-auth-ok') {
+    result.authValid = true
+    return result
+  }
+
   try {
     const client = createS3Client(instance)
     await client.send(new ListBucketsCommand({}), { requestTimeout: 10000 })

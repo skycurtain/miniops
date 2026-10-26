@@ -1,0 +1,79 @@
+# S3 兼容面（权威）
+
+miniops 不绑定 MinIO。协议层为标准 S3（`@aws-sdk/client-s3`，`forcePathStyle: true`）。
+
+## 依赖的 S3 API
+
+| API | 用途 | 备注 |
+|-----|------|------|
+| `ListBuckets` | bucket 列表、凭据校验 | |
+| `ListObjectsV2` | 对象/虚拟目录列表 | `delimiter=/`，`continuationToken` 分页 |
+| `PutObject` | 上传 | 显式 `ContentType`；单次 PUT，无 Multipart |
+| `GetObject` | 下载/预览 | 支持 `Range` |
+| `CopyObject` | 同 endpoint 复制 | 跨实例用 Get+Put |
+| `DeleteObjects` | 批量删除 | 每批 1000；带 `Content-MD5` |
+
+不依赖：Multipart Upload、预签名 URL、S3 Select、版本控制等。
+
+## 客户端配置
+
+```ts
+new S3Client({
+  endpoint,                          // 实例配置
+  region: instance.region || 'us-east-1',
+  credentials: { accessKeyId, secretAccessKey },
+  forcePathStyle: true,
+})
+```
+
+## 健康探测
+
+`testConnectivity` 顺序：
+
+1. **`GET {endpoint}/minio/health/live`**（MinIO / SILO / RustFS 提供）  
+   - 200 → 在线  
+   - 404 / 405 / 其他非 2xx / 超时 → **降级**
+2. **降级：`ListBuckets`**  
+   - 成功 → 在线 + 凭据有效  
+   - 403 → 在线 + 凭据无效  
+   - 其他 HTTP 响应 → 可达  
+   - 网络错误 → 离线
+
+因此纯 S3 实现（无 MinIO health 路径）同样可以接入。
+
+## 实测矩阵
+
+### 2026-10 全链路实测（经 miniops HTTP API，与 UI 同源）
+
+| 平台 | 性质 | `/minio/health/live` | 六项 S3 API | miniops 改造量 |
+|------|------|----------------------|-------------|----------------|
+| **PGSTY SILO** | MinIO fork / drop-in | ✅ 200 | ✅ 全过 | **0** |
+| **RustFS 1.0** | S3 + MinIO SDK 兼容 | ✅ 200 | ✅ 全过 | **0** |
+| MinIO（旧版镜像） | 官方经典 | ✅ 200 | ✅ | **0**（历史基线） |
+
+覆盖操作：连通性、Bucket/对象列表、上传、下载、Range 206、copy/move（含删源）、删除、特殊字符 key、约 5MB 文件、跨实例分发、ZIP 批量下载、暂存管理、任务查看。
+
+### 未实测（预期需验证）
+
+| 平台 | health 路径 | 预期 |
+|------|-------------|------|
+| Garage / SeaweedFS / Ceph RGW | 通常无 | 走 ListBuckets 降级即可 |
+| AWS S3 | 无 | 降级探测 + 正确 `region` |
+
+## 非 MinIO 系注意事项
+
+1. **Region**：AWS S3 按 bucket 区域校验，务必配置实例 `region`。
+2. **Path-style**：自建存储推荐 path-style；AWS 新桶更偏好 virtual-host（当前固定 path-style）。
+3. **Content-MD5**：`DeleteObjects` 使用，属 S3 标准，不是 MinIO 私有。
+4. **无 Multipart**：超大对象单次 PUT，内存占用约等于文件大小；部分实现对超大单次 PUT 有限制。
+5. **Console**：MinIO 系 Console 预览依赖正确 Content-Type；`;charset=utf-8` 污染会导致预览失败（已在暂存层规避）。
+
+## Docker 测试后端（示例）
+
+| 目录（项目外） | 端口 | 凭据 |
+|----------------|------|------|
+| `miniops-minio` | 9000/9002 + console | minioadmin |
+| `miniops-rustfs` | 9010/9011 | minioadmin |
+| `miniops-silo` | 9020/9021 | minioadmin |
+
+SILO 注意：不要设置 `MINIO_SERVER_URL` 为宿主机映射端口，否则 Console 登录 503。

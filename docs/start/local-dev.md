@@ -5,15 +5,15 @@
 ## 运行时
 
 - **必须使用 Bun**。历史修复依赖 Bun 行为（`readFormData` / 非 ASCII filename 等），改用 Node 可能回归。
-- 生产 Nitro 使用 `bun` preset。
+- Nitro 构建产物由 `nuxt.config.ts` 中 `nitro.preset: 'bun'` 决定；部署形态未定。
 
 ## 常用命令
 
 ```bash
 bun install
 bun run dev          # 开发服 localhost:3000
-bun run build        # 构建
-bun run start        # 运行 .output
+bun run build        # 构建 .output
+bun run start        # 本地运行构建产物（非完整部署方案）
 bun run lint         # ESLint
 bun run typecheck    # nuxt typecheck
 ```

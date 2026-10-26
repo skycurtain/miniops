@@ -4,7 +4,7 @@
 
 ## 1. 前置条件
 
-- **Bun**（开发与生产均依赖；Windows 下 compose 命令是 `docker-compose`）
+- **Bun**（开发与运行 `.output` 均使用；Windows 下 compose 命令是 `docker-compose`）
 - 至少一个 **S3 兼容对象存储**（MinIO / PGSTY SILO / RustFS / 其他）
 
 本地测试后端可参考项目外的 Docker Compose 配置（例如 `D:\docker\dockers-compose\miniops-*`）：
@@ -21,12 +21,14 @@ bun install
 bun run dev        # http://localhost:3000
 ```
 
-生产：
+构建后运行（本地或自托管机器）：
 
 ```bash
 bun run build
-bun run start
+bun run start      # 运行 .output
 ```
+
+> **部署说明**：生产部署方案（容器化、反向代理、进程守护、发布流程）尚未定义，本文不展开。当前仅保证上述脚本可构建、可运行。
 
 ## 3. 添加实例
 

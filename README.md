@@ -21,7 +21,7 @@ bun run dev
 # 打开 http://localhost:3000
 ```
 
-需要一个 S3 兼容端点（MinIO / SILO / RustFS / …）。完整步骤见 **[docs/start/quickstart.md](docs/start/quickstart.md)**。
+需要一个 S3 兼容端点（MinIO / SILO / RustFS / …）。完整步骤见 **[docs/start/快速开始.md](docs/start/快速开始.md)**。
 
 ## 文档
 
@@ -29,11 +29,10 @@ bun run dev
 
 | 我想… | 去这里 |
 |-------|--------|
-| 跑起来并完成第一次操作 | [docs/start/quickstart.md](docs/start/quickstart.md) |
-| 看功能怎么用 | [docs/guides/](docs/guides/) |
+| 跑起来并完成第一次操作 | [docs/start/快速开始.md](docs/start/快速开始.md) |
 | 查环境变量 / HTTP API / 数据模型 | [docs/reference/](docs/reference/) |
-| 了解架构决策、S3 兼容面 | [docs/design/](docs/design/) · [docs/reference/s3-compatibility.md](docs/reference/s3-compatibility.md) |
-| 参与开发 | [docs/start/local-dev.md](docs/start/local-dev.md) · [AGENTS.md](AGENTS.md) |
+| 了解架构与技术方案、S3 兼容面 | [docs/design/](docs/design/) · [docs/reference/S3兼容性.md](docs/reference/S3兼容性.md) |
+| 参与开发 | [docs/start/本地开发.md](docs/start/本地开发.md) · [AGENTS.md](AGENTS.md) |
 
 ## 开发
 

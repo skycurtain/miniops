@@ -25,8 +25,9 @@
 ## 禁止
 
 - 不要在未改代码时声称「行为已对齐文档」。
-- 不要引入 S3 Multipart Upload / 预签名 URL / 自写 SigV4——当前**已决策不做**（见 `docs/design/unified-task-architecture.md`）。除非任务明确要求。
+- 不要引入 S3 Multipart Upload / 预签名 URL / 自写 SigV4——产品范围不含这些能力（见 `docs/design/技术方案/统一任务架构.md`）。除非任务明确要求。
 - 不要把 `docs/reference/` 里的契约改成「大概」——字段名、路由、默认值要与代码一致。
+- 文档只写现状技术方案，不写决策过程或变更史。
 - 不要删除或改写用户未要求动的 `后续功能.md`。
 - 不要假设存在 `bun` 时的全局安装脚本入口；Windows 上 compose 命令是 `docker-compose`（独立 exe）。
 
@@ -85,5 +86,5 @@
 ## 文档规范摘要
 
 - 唯一来源：env / API / 字段 / S3 依赖只写在 `docs/reference/`。
-- `docs/design/` 文档带 `Status:`（Draft → … → Shipped）。
+- 只写现状，不写决策过程与变更史。
 - 中文正文；命令、路径、类型名保持英文。

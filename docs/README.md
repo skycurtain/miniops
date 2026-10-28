@@ -9,52 +9,56 @@
 ```text
 docs/
   start/        入门：本地运行、Docker 后端、五分钟上手
-  guides/       任务手册：按操作场景写「怎么做」
   reference/    权威参考：环境变量、HTTP API、数据模型、S3 兼容面（唯一来源）
-  design/       架构决策与技术方案（带 Status 生命周期）
+  design/
+    交互设计/   界面契约：布局、状态、流程、边界
+    技术方案/   系统如何工作：架构、执行器、协议层、暂存、配置存储
 ```
 
 ## 按角色阅读
 
 | 你是 | 从这里开始 |
 |------|------------|
-| 使用者 / 运维 | [start/quickstart.md](start/quickstart.md) → [guides/](guides/) |
-| 开发者 / 贡献者 | [start/local-dev.md](start/local-dev.md) → [reference/](reference/) → [design/](design/) |
-| 对接 API 的程序 | [reference/http-api.md](reference/http-api.md) |
-| 要接新 S3 后端 | [reference/s3-compatibility.md](reference/s3-compatibility.md) |
-| 查环境变量 | [reference/environment.md](reference/environment.md) |
+| 使用者 / 运维 | [start/快速开始.md](start/快速开始.md) |
+| 开发者 / 贡献者 | [start/本地开发.md](start/本地开发.md) → [reference/](reference/) → [design/](design/) |
+| 对接 API 的程序 | [reference/HTTP接口.md](reference/HTTP接口.md) |
+| 要接新 S3 后端 | [reference/S3兼容性.md](reference/S3兼容性.md) |
+| 查环境变量 | [reference/环境变量.md](reference/环境变量.md) |
 
 ## 内容地图
 
 ### start/
 
-- [quickstart.md](start/quickstart.md) — 跑起来并完成一次分发
-- [local-dev.md](start/local-dev.md) — 开发环境、命令、调试
-
-### guides/
-
-- [manage-instances.md](guides/manage-instances.md) — 实例与分组管理
-- [browse-objects.md](guides/browse-objects.md) — 对象浏览、上传、预览、删除、复制/移动
-- [dispatch-files.md](guides/dispatch-files.md) — 本地文件批量分发
-- [task-viewer.md](guides/task-viewer.md) — 任务查看器与暂存管理
+- [快速开始.md](start/快速开始.md) — 跑起来并完成一次分发
+- [本地开发.md](start/本地开发.md) — 开发环境、命令、调试
 
 ### reference/
 
-- [environment.md](reference/environment.md) — 全部环境变量（权威）
-- [http-api.md](reference/http-api.md) — HTTP API 契约（权威）
-- [data-model.md](reference/data-model.md) — 持久化数据与共享类型（权威）
-- [s3-compatibility.md](reference/s3-compatibility.md) — 依赖的 S3 API 面与实测矩阵
+- [环境变量.md](reference/环境变量.md) — 全部环境变量（权威）
+- [HTTP接口.md](reference/HTTP接口.md) — HTTP API 契约（权威）
+- [数据模型.md](reference/数据模型.md) — 持久化数据与共享类型（权威）
+- [S3兼容性.md](reference/S3兼容性.md) — 依赖的 S3 API 面与实测矩阵
 
-### design/
+### design/交互设计/
 
-- [unified-task-architecture.md](design/unified-task-architecture.md) — 统一任务架构（Status: Shipped）
-- [product-positioning.md](design/product-positioning.md) — 产品定位从 MinIO 到通用 S3（Status: Shipped）
+- [全局与导航.md](design/交互设计/全局与导航.md) — 布局骨架、顶栏、路由
+- [实例管理.md](design/交互设计/实例管理.md) — 分组与实例表、表单、连通性、导入导出
+- [对象浏览.md](design/交互设计/对象浏览.md) — 标签页、列表、预览、上传/删除/复制移动
+- [文件分发.md](design/交互设计/文件分发.md) — 阶段机、目标选择、进度与重试
+- [任务与暂存.md](design/交互设计/任务与暂存.md) — 任务查看器角标、暂存面板
+
+### design/技术方案/
+
+- [统一任务架构.md](design/技术方案/统一任务架构.md) — 任务框架与生命周期
+- [任务执行器.md](design/技术方案/任务执行器.md) — 分发 / 上传 / 复制 / 移动
+- [S3协议层.md](design/技术方案/S3协议层.md) — 客户端、探测、对象操作
+- [暂存.md](design/技术方案/暂存.md) — 磁盘暂存与清理
+- [配置存储.md](design/技术方案/配置存储.md) — groups.json 与写锁
 
 ## 编写规范（Documentation Policy）
 
 1. **唯一来源**：环境变量、HTTP 路由、数据字段、S3 API 依赖只写在 `reference/`。其他文档引用链接，不复制粘贴完整表。
-2. **design 带 Status**：文档顶部声明 `Status: Draft | In progress | Implemented | Shipped`。落地后只改 Status，不搬家。
-3. **历史过程稿不进正文**：superseded 材料如需暂存，放 `archive/` 并随时可删；文档中心不得依赖其存在。
-4. **与代码同 PR 更新**：改行为必须同步改 `reference/`；仅改表述不强制。
-5. **中文为主**；命令、API 路径、类型名保持英文原文。
-6. **禁止平行副本**：同一主题只在一处展开，其他位置用链接。
+2. **只写现状**：描述当前架构与行为；不写决策过程、变更历史、曾经有过的方案。
+3. **与代码同 PR 更新**：改行为必须同步改 `reference/` 与相关 `design/`；仅改表述不强制。
+4. **中文为主**；命令、API 路径、类型名保持英文原文。
+5. **禁止平行副本**：同一主题只在一处展开，其他位置用链接。
